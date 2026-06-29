@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "name": "MNIST Classifier",
+  "nodes": [
+    {
+      "id": "inputNode-1",
+      "type": "inputNode",
+      "position": { "x": 60, "y": 220 },
+      "data": {
+        "label": "Input",
+        "batchSize": 32,
+        "channels": 1,
+        "height": 28,
+        "width": 28
+      }
+    },
+    {
+      "id": "denseNode-1",
+      "type": "denseNode",
+      "position": { "x": 360, "y": 140 },
+      "data": {
+        "label": "Dense",
+        "units": 512,
+        "activation": "relu",
+        "useBias": true
+      }
+    },
+    {
+      "id": "denseNode-2",
+      "type": "denseNode",
+      "position": { "x": 360, "y": 310 },
+      "data": {
+        "label": "Dense",
+        "units": 256,
+        "activation": "relu",
+        "useBias": true
+      }
+    },
+    {
+      "id": "denseNode-3",
+      "type": "denseNode",
+      "position": { "x": 660, "y": 220 },
+      "data": {
+        "label": "Dense",
+        "units": 128,
+        "activation": "relu",
+        "useBias": true
+      }
+    },
+    {
+      "id": "outputNode-1",
+      "type": "outputNode",
+      "position": { "x": 960, "y": 220 },
+      "data": {
+        "label": "Output",
+        "name": "logits",
+        "classes": 10
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "inputNode-1",
+      "target": "denseNode-1",
+      "style": { "stroke": "#52525b", "strokeWidth": 1.5 }
+    },
+    {
+      "id": "e2",
+      "source": "inputNode-1",
+      "target": "denseNode-2",
+      "style": { "stroke": "#52525b", "strokeWidth": 1.5 }
+    },
+    {
+      "id": "e3",
+      "source": "denseNode-1",
+      "target": "denseNode-3",
+      "style": { "stroke": "#52525b", "strokeWidth": 1.5 }
+    },
+    {
+      "id": "e4",
+      "source": "denseNode-2",
+      "target": "denseNode-3",
+      "style": { "stroke": "#52525b", "strokeWidth": 1.5 }
+    },
+    {
+      "id": "e5",
+      "source": "denseNode-3",
+      "target": "outputNode-1",
+      "style": { "stroke": "#52525b", "strokeWidth": 1.5 }
+    }
+  ]
+}

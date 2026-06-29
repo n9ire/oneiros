@@ -1,0 +1,362 @@
+"""
+Oneiros FastAPI backend.
+
+Start with:
+    uvicorn main:app --reload --host 0.0.0.0 --port 8000
+"""
+
+from __future__ import annotations
+
+import asyncio
+import io
+import json
+import os
+import tempfile
+import uuid
+from typing import Any
+
+import torch
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+
+from compiler import build_model
+from datasets import get_loaders, get_dataset_info, list_datasets, make_custom_loaders
+from trainer import run_training_async
+from ai import chat as ai_chat
+from plotter import generate_plot, CHART_DEFS, PALETTES
+
+# ── App setup ──────────────────────────────────────────────────────────────────
+
+app = FastAPI(title="Oneiros API", version="0.1.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ── In-memory run state ───────────────────────────────────────────────────────
+
+# run_id → {"request": TrainRequest, "stop": asyncio.Event}
+pending_runs: dict[str, Any] = {}
+active_runs: dict[str, dict[str, Any]] = {}
+
+# Store trained models for export (run_id → {"model": nn.Module, "graph": dict})
+trained_models: dict[str, dict[str, Any]] = {}
+
+
+# ── Request / response models ─────────────────────────────────────────────────
+
+class CompileRequest(BaseModel):
+    nodes: list[dict]
+    edges: list[dict]
+
+
+class TrainConfig(BaseModel):
+    dataset: str = "mnist"
+    epochs: int = 10
+    batchSize: int = 64
+    learningRate: float = 0.001
+    optimizer: str = "adam"
+    lossFunction: str = "cross_entropy"
+    # Schedulers
+    scheduler: str = "none"
+    schedulerStepSize: int = 5
+    schedulerGamma: float = 0.5
+    schedulerTMax: int = 10
+
+
+class TrainRequest(BaseModel):
+    graph: dict
+    config: TrainConfig
+    customDataset: dict | None = None
+
+
+class AIChatRequest(BaseModel):
+    messages: list[dict]
+    context: dict = {}
+    apiKey: str = ""
+    model: str = "gpt-4o"
+
+
+# PlotRequest intentionally uses raw Request — dataset rows can contain
+# any JSON scalar types and strict Pydantic coercion causes false 422s.
+
+
+# ── REST endpoints ────────────────────────────────────────────────────────────
+
+@app.get("/api/health")
+async def health() -> dict:
+    return {"status": "ok"}
+
+
+@app.get("/api/datasets")
+async def datasets_list() -> dict:
+    return {
+        "datasets": [
+            {"id": ds, **get_dataset_info(ds)}  # type: ignore[misc]
+            for ds in list_datasets()
+        ]
+    }
+
+
+@app.get("/api/plot/meta")
+async def plot_meta() -> dict:
+    """Return available chart types and palettes."""
+    return {"chartDefs": CHART_DEFS, "palettes": PALETTES}
+
+
+@app.post("/api/plot")
+async def plot(request: Request) -> StreamingResponse:
+    """Generate a seaborn/matplotlib chart and return PNG bytes."""
+    from fastapi.responses import JSONResponse
+    try:
+        body = await request.json()
+    except Exception as exc:
+        return JSONResponse({"error": f"Invalid JSON body: {exc}"}, status_code=400)
+
+    rows: list[dict] = body.get("rows", [])
+    config: dict = body.get("config", {})
+
+    if not rows:
+        return JSONResponse({"error": "No data rows provided."}, status_code=422)
+
+    try:
+        png_bytes = generate_plot(rows, config)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"error": f"Plot failed: {exc}"}, status_code=500)
+
+    return StreamingResponse(
+        io.BytesIO(png_bytes),
+        media_type="image/png",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.post("/api/compile")
+async def compile_graph(req: CompileRequest) -> dict:
+    graph = {"nodes": req.nodes, "edges": req.edges}
+    _model, errors = build_model(graph)
+    if errors:
+        return {"success": False, "errors": errors}
+    return {"success": True, "errors": []}
+
+
+@app.post("/api/ai/chat")
+async def ai_chat_endpoint(req: AIChatRequest) -> dict:
+    if not req.apiKey:
+        return {
+            "message": (
+                "No API key set. Enter your OpenAI key in the AI panel settings "
+                "(click the key icon). Your key is stored only in your browser."
+            )
+        }
+    message = await ai_chat(req.messages, req.context, req.apiKey, req.model)
+    return {"message": message}
+
+
+@app.post("/api/train/start")
+async def start_training(req: TrainRequest) -> dict:
+    run_id = str(uuid.uuid4())
+    pending_runs[run_id] = req
+    return {"runId": run_id}
+
+
+@app.post("/api/train/stop/{run_id}")
+async def stop_training(run_id: str) -> dict:
+    run = active_runs.get(run_id)
+    if run:
+        run["stop"].set()
+        return {"status": "stopping"}
+    return {"status": "not_found"}
+
+
+# ── Export endpoints ──────────────────────────────────────────────────────────
+
+@app.get("/api/export/{run_id}/weights")
+async def export_weights(run_id: str, filename: str = "model.pt") -> StreamingResponse:
+    """Download trained model weights as a PyTorch .pt file."""
+    entry = trained_models.get(run_id)
+    if not entry:
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"error": "Model not found — train the model first."}, status_code=404)
+
+    model: torch.nn.Module = entry["model"]
+    buf = io.BytesIO()
+    torch.save(model.state_dict(), buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/export/{run_id}/onnx")
+async def export_onnx(run_id: str, filename: str = "model.onnx") -> StreamingResponse:
+    """Export trained model as ONNX."""
+    entry = trained_models.get(run_id)
+    if not entry:
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"error": "Model not found — train the model first."}, status_code=404)
+
+    model: torch.nn.Module = entry["model"]
+    graph: dict = entry["graph"]
+
+    # Infer input shape from graph
+    input_node = next((n for n in graph.get("nodes", []) if n.get("type") == "inputNode"), None)
+    if input_node:
+        d = input_node.get("data", {})
+        dummy = torch.randn(1, int(d.get("channels", 1)), int(d.get("height", 28)), int(d.get("width", 28)))
+    else:
+        dummy = torch.randn(1, 1, 28, 28)
+
+    model.eval()
+    buf = io.BytesIO()
+    try:
+        torch.onnx.export(
+            model,
+            dummy,
+            buf,
+            export_params=True,
+            opset_version=17,
+            input_names=["input"],
+            output_names=["output"],
+            dynamic_axes={"input": {0: "batch_size"}, "output": {0: "batch_size"}},
+        )
+    except Exception as exc:
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"error": f"ONNX export failed: {exc}"}, status_code=500)
+
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/export/{run_id}/full")
+async def export_full(run_id: str, filename: str = "model_full.pt") -> StreamingResponse:
+    """Download the full model (architecture + weights) via torch.save."""
+    entry = trained_models.get(run_id)
+    if not entry:
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"error": "Model not found — train the model first."}, status_code=404)
+
+    model: torch.nn.Module = entry["model"]
+    buf = io.BytesIO()
+    torch.save(model, buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ── WebSocket training endpoint ───────────────────────────────────────────────
+
+@app.websocket("/ws/training/{run_id}")
+async def training_websocket(websocket: WebSocket, run_id: str) -> None:
+    await websocket.accept()
+
+    req: TrainRequest | None = pending_runs.pop(run_id, None)  # type: ignore[assignment]
+    if req is None:
+        await websocket.send_json({"type": "error", "message": "Invalid or expired run ID"})
+        await websocket.close()
+        return
+
+    # Build model
+    model, errors = build_model(req.graph)
+    if errors:
+        await websocket.send_json({"type": "error", "message": "; ".join(errors)})
+        await websocket.close()
+        return
+
+    # Load dataset
+    try:
+        if req.config.dataset == "custom":
+            if not req.customDataset:
+                await websocket.send_json({"type": "error", "message": "Custom dataset payload missing."})
+                await websocket.close()
+                return
+            train_loader, val_loader = make_custom_loaders(
+                req.customDataset,
+                batch_size=req.config.batchSize,
+            )
+        else:
+            train_loader, val_loader = get_loaders(
+                req.config.dataset,
+                batch_size=req.config.batchSize,
+            )
+    except Exception as exc:
+        await websocket.send_json({"type": "error", "message": str(exc)})
+        await websocket.close()
+        return
+
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    stop_event = asyncio.Event()
+    active_runs[run_id] = {"stop": stop_event}
+
+    config_dict = req.config.model_dump()
+
+    training_task = asyncio.create_task(
+        run_training_async(model, train_loader, val_loader, config_dict, queue, stop_event)
+    )
+
+    try:
+        while True:
+            try:
+                msg = await asyncio.wait_for(queue.get(), timeout=1.0)
+            except asyncio.TimeoutError:
+                if training_task.done():
+                    break
+                continue
+
+            await websocket.send_json(msg)
+
+            if msg.get("type") in ("complete", "stopped", "error"):
+                # Store model if training completed successfully
+                if msg.get("type") == "complete":
+                    trained_models[run_id] = {"model": model, "graph": req.graph}
+                break
+
+        # Drain remaining messages
+        while not queue.empty():
+            msg = queue.get_nowait()
+            try:
+                await websocket.send_json(msg)
+            except Exception:
+                break
+
+    except WebSocketDisconnect:
+        stop_event.set()
+    except Exception as exc:
+        try:
+            await websocket.send_json({"type": "error", "message": str(exc)})
+        except Exception:
+            pass
+    finally:
+        stop_event.set()
+        await training_task
+        active_runs.pop(run_id, None)
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+# ── Dev entry point ───────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

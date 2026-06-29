@@ -1,0 +1,125 @@
+@import "tailwindcss";
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: #09090b;
+  color: #d4d4d8;
+  font-size: 13px;
+}
+
+/* ── XYFlow canvas overrides ─────────────────────────────── */
+
+.react-flow__renderer {
+  background: #09090b;
+}
+
+.react-flow__pane {
+  cursor: default;
+}
+
+.react-flow__edge-path,
+.react-flow__connection-path {
+  stroke: #52525b;
+  stroke-width: 1.5;
+}
+
+.react-flow__edge.selected .react-flow__edge-path,
+.react-flow__edge:hover .react-flow__edge-path {
+  stroke: #7c3aed;
+  stroke-width: 2;
+}
+
+.react-flow__edge-text {
+  fill: #a1a1aa;
+  font-size: 11px;
+}
+
+.react-flow__attribution {
+  display: none;
+}
+
+.react-flow__controls {
+  background: #18181b;
+  border: 1px solid #27272a;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.react-flow__controls-button {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid #27272a;
+  color: #a1a1aa;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.react-flow__controls-button:hover {
+  background: #27272a;
+  color: #f4f4f5;
+}
+
+.react-flow__controls-button:last-child {
+  border-bottom: none;
+}
+
+.react-flow__controls-button svg {
+  width: 12px;
+  height: 12px;
+  fill: currentColor;
+}
+
+.react-flow__minimap {
+  background: #18181b;
+  border: 1px solid #27272a;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.react-flow__minimap-mask {
+  fill: rgba(124, 58, 237, 0.15);
+}
+
+.react-flow__background {
+  background: #09090b;
+}
+
+.react-flow__node.selected > div {
+  outline: none;
+}
+
+/* Prevent XYFlow default node focus ring */
+.react-flow__node:focus {
+  outline: none;
+}
+
+/* Training panel live indicator */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.3; }
+}
+
+/* Hide number input spinners for cleaner UI */
+input[type='number']::-webkit-inner-spin-button,
+input[type='number']::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type='number'] { -moz-appearance: textfield; }
