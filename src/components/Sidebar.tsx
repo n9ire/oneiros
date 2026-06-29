@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { DragEvent } from 'react'
 import { getAllNodes } from '../editor/registry/nodeRegistry'
 import '../editor/nodes/index'
@@ -35,6 +35,8 @@ function SearchIcon() {
 
 export default function Sidebar() {
   const [query, setQuery] = useState('')
+  const [width, setWidth] = useState(220)
+  const drag = useRef({ active: false, startX: 0, startW: 0 })
   const allNodes = getAllNodes()
 
   const filtered = query.trim()
@@ -45,11 +47,9 @@ export default function Sidebar() {
       )
     : allNodes
 
-  // Group by logical category sections (merge input+output into one)
   const grouped: Partial<Record<string, typeof allNodes>> = {}
   for (const node of filtered) {
-    const section =
-      node.category === 'output' ? 'input' : node.category
+    const section = node.category === 'output' ? 'input' : node.category
     if (!grouped[section]) grouped[section] = []
     grouped[section]!.push(node)
   }
@@ -59,45 +59,50 @@ export default function Sidebar() {
     e.dataTransfer.effectAllowed = 'copy'
   }
 
+  function onResizeMouseDown(e: React.MouseEvent) {
+    e.preventDefault()
+    drag.current = { active: true, startX: e.clientX, startW: width }
+    const onMove = (ev: MouseEvent) => {
+      if (!drag.current.active) return
+      const next = Math.max(160, Math.min(420, drag.current.startW + ev.clientX - drag.current.startX))
+      setWidth(next)
+    }
+    const onUp = () => {
+      drag.current.active = false
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+
   return (
     <aside
       style={{
-        width: 220,
+        width,
+        minWidth: width,
         background: '#111113',
         borderRight: '1px solid #1e1e2e',
         display: 'flex',
         flexDirection: 'column',
         flexShrink: 0,
         overflow: 'hidden',
+        position: 'relative',
       }}
     >
       {/* Header */}
       <div style={{ padding: '12px 12px 8px', borderBottom: '1px solid #1e1e2e' }}>
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 7,
-            background: '#18181b',
-            border: '1px solid #27272a',
-            borderRadius: 7,
-            padding: '6px 10px',
-          }}
-        >
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 7,
+          background: '#18181b', border: '1px solid #27272a',
+          borderRadius: 7, padding: '6px 10px',
+        }}>
           <span style={{ color: '#52525b' }}><SearchIcon /></span>
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search nodes…"
-            style={{
-              background: 'transparent',
-              border: 'none',
-              outline: 'none',
-              color: '#d4d4d8',
-              fontSize: 12,
-              flex: 1,
-              minWidth: 0,
-            }}
+            style={{ background: 'transparent', border: 'none', outline: 'none', color: '#d4d4d8', fontSize: 12, flex: 1, minWidth: 0 }}
           />
         </div>
       </div>
@@ -109,16 +114,7 @@ export default function Sidebar() {
           if (!items || items.length === 0) return null
           return (
             <div key={section} style={{ marginBottom: 4 }}>
-              <div
-                style={{
-                  padding: '6px 14px 4px',
-                  fontSize: 10,
-                  fontWeight: 600,
-                  letterSpacing: '0.08em',
-                  textTransform: 'uppercase',
-                  color: '#52525b',
-                }}
-              >
+              <div style={{ padding: '6px 14px 4px', fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#52525b' }}>
                 {categoryLabels[section]}
               </div>
               {items.map((node) => (
@@ -133,7 +129,6 @@ export default function Sidebar() {
             </div>
           )
         })}
-
         {filtered.length === 0 && (
           <div style={{ padding: '24px 14px', textAlign: 'center', color: '#3f3f46', fontSize: 12 }}>
             No nodes match "{query}"
@@ -142,17 +137,23 @@ export default function Sidebar() {
       </div>
 
       {/* Footer hint */}
-      <div
-        style={{
-          padding: '8px 14px',
-          borderTop: '1px solid #1e1e2e',
-          fontSize: 11,
-          color: '#3f3f46',
-          lineHeight: 1.5,
-        }}
-      >
+      <div style={{ padding: '8px 14px', borderTop: '1px solid #1e1e2e', fontSize: 11, color: '#3f3f46', lineHeight: 1.5 }}>
         Drag nodes onto the canvas
       </div>
+
+      {/* Resize handle */}
+      <div
+        onMouseDown={onResizeMouseDown}
+        title="Drag to resize"
+        style={{
+          position: 'absolute', top: 0, right: 0, width: 4, height: '100%',
+          cursor: 'ew-resize', zIndex: 10,
+          background: 'transparent',
+          transition: 'background 0.15s',
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.background = '#7c3aed66' }}
+        onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+      />
     </aside>
   )
 }
@@ -170,42 +171,18 @@ function PaletteItem({ label, description, color, onDragStart }: PaletteItemProp
       draggable
       onDragStart={onDragStart}
       style={{
-        margin: '2px 8px',
-        padding: '8px 10px',
-        borderRadius: 7,
-        border: '1px solid transparent',
-        cursor: 'grab',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 9,
-        transition: 'background 0.1s, border-color 0.1s',
-        userSelect: 'none',
+        margin: '2px 8px', padding: '8px 10px', borderRadius: 7,
+        border: '1px solid transparent', cursor: 'grab',
+        display: 'flex', alignItems: 'center', gap: 9,
+        transition: 'background 0.1s, border-color 0.1s', userSelect: 'none',
       }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.background = '#18181b'
-        e.currentTarget.style.borderColor = '#27272a'
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.background = 'transparent'
-        e.currentTarget.style.borderColor = 'transparent'
-      }}
+      onMouseEnter={(e) => { e.currentTarget.style.background = '#18181b'; e.currentTarget.style.borderColor = '#27272a' }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'transparent' }}
     >
-      <span
-        style={{
-          width: 8,
-          height: 8,
-          borderRadius: '50%',
-          background: color,
-          flexShrink: 0,
-        }}
-      />
+      <span style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
       <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 12, fontWeight: 500, color: '#d4d4d8', lineHeight: 1.3 }}>
-          {label}
-        </div>
-        <div style={{ fontSize: 10, color: '#52525b', lineHeight: 1.3, marginTop: 1 }}>
-          {description}
-        </div>
+        <div style={{ fontSize: 12, fontWeight: 500, color: '#d4d4d8', lineHeight: 1.3 }}>{label}</div>
+        <div style={{ fontSize: 10, color: '#52525b', lineHeight: 1.3, marginTop: 1 }}>{description}</div>
       </div>
     </div>
   )

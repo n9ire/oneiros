@@ -6,6 +6,8 @@ interface BatchNormData extends Record<string, unknown> {
   label: string
   eps: number
   momentum: number
+  affine: boolean
+  trackRunningStats: boolean
 }
 
 type BatchNormNodeType = Node<BatchNormData, 'batchNormNode'>
@@ -41,10 +43,14 @@ registerNode({
     label: 'BatchNorm',
     eps: 1e-5,
     momentum: 0.1,
+    affine: true,
+    trackRunningStats: true,
   },
   fields: [
     { key: 'eps', label: 'Epsilon', type: 'number', min: 0, step: 1e-5 },
     { key: 'momentum', label: 'Momentum', type: 'number', min: 0, max: 1, step: 0.01 },
+    { key: 'affine', label: 'Affine (learnable γ/β)', type: 'boolean' },
+    { key: 'trackRunningStats', label: 'Track Running Stats', type: 'boolean' },
   ],
   component: BatchNormNode,
 })

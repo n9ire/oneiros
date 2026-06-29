@@ -9,6 +9,7 @@ export type TrainingStatus =
 export type SchedulerType = 'none' | 'step' | 'cosine' | 'plateau' | 'exponential'
 
 export interface TrainingConfig {
+  modelType: 'nn' | 'xgboost'
   dataset: 'mnist' | 'fashion_mnist' | 'cifar10' | 'custom'
   epochs: number
   batchSize: number
@@ -17,9 +18,22 @@ export interface TrainingConfig {
   lossFunction: 'cross_entropy' | 'mse'
   // Scheduler
   scheduler: SchedulerType
-  schedulerStepSize: number   // StepLR
-  schedulerGamma: number      // StepLR / ExponentialLR
-  schedulerTMax: number       // CosineAnnealingLR
+  schedulerStepSize: number
+  schedulerGamma: number
+  schedulerTMax: number
+  // XGBoost hyperparameters
+  xgbTask: 'classification' | 'regression'
+  xgbObjective: string       // e.g. 'binary:logistic', 'reg:squarederror'
+  xgbNEstimators: number
+  xgbMaxDepth: number
+  xgbLearningRate: number
+  xgbSubsample: number
+  xgbColsampleBytree: number
+  xgbMinChildWeight: number
+  xgbGamma: number
+  xgbRegAlpha: number
+  xgbRegLambda: number
+  xgbEarlyStoppingRounds: number
 }
 
 export interface EpochMetrics {
@@ -36,6 +50,7 @@ export interface TrainingMessage {
 }
 
 export const DEFAULT_CONFIG: TrainingConfig = {
+  modelType: 'nn',
   dataset: 'mnist',
   epochs: 10,
   batchSize: 64,
@@ -46,6 +61,18 @@ export const DEFAULT_CONFIG: TrainingConfig = {
   schedulerStepSize: 5,
   schedulerGamma: 0.5,
   schedulerTMax: 10,
+  xgbTask: 'classification',
+  xgbObjective: '',
+  xgbNEstimators: 200,
+  xgbMaxDepth: 6,
+  xgbLearningRate: 0.1,
+  xgbSubsample: 0.8,
+  xgbColsampleBytree: 0.8,
+  xgbMinChildWeight: 1,
+  xgbGamma: 0.0,
+  xgbRegAlpha: 0.0,
+  xgbRegLambda: 1.0,
+  xgbEarlyStoppingRounds: 20,
 }
 
 export interface CustomDatasetPayload {

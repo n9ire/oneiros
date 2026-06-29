@@ -1,3 +1,4 @@
+import { useRef, useState } from 'react'
 import { useGraphStore } from '../store/useGraphStore'
 import { getNodeDefinition } from '../editor/registry/nodeRegistry'
 import type { NodeField } from '../types/node'
@@ -7,21 +8,56 @@ export default function PropertyPanel() {
   const nodes = useGraphStore((s) => s.nodes)
   const updateNodeData = useGraphStore((s) => s.updateNodeData)
 
+  const [width, setWidth] = useState(260)
+  const drag = useRef({ active: false, startX: 0, startW: 0 })
+
   const selectedNode = nodes.find((n) => n.id === selectedNodeId)
   const def = selectedNode ? getNodeDefinition(selectedNode.type ?? '') : undefined
+
+  function onResizeMouseDown(e: React.MouseEvent) {
+    e.preventDefault()
+    drag.current = { active: true, startX: e.clientX, startW: width }
+    const onMove = (ev: MouseEvent) => {
+      if (!drag.current.active) return
+      // Dragging left edge: moving left increases width
+      const next = Math.max(200, Math.min(480, drag.current.startW + drag.current.startX - ev.clientX))
+      setWidth(next)
+    }
+    const onUp = () => {
+      drag.current.active = false
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
 
   return (
     <aside
       style={{
-        width: 260,
+        width,
+        minWidth: width,
         background: '#111113',
         borderLeft: '1px solid #1e1e2e',
         display: 'flex',
         flexDirection: 'column',
         flexShrink: 0,
         overflow: 'hidden',
+        position: 'relative',
       }}
     >
+      {/* Resize handle on left edge */}
+      <div
+        onMouseDown={onResizeMouseDown}
+        title="Drag to resize"
+        style={{
+          position: 'absolute', top: 0, left: 0, width: 4, height: '100%',
+          cursor: 'ew-resize', zIndex: 10,
+          background: 'transparent', transition: 'background 0.15s',
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.background = '#7c3aed66' }}
+        onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+      />
       {/* Header */}
       <div
         style={{

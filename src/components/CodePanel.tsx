@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useGraphStore } from '../store/useGraphStore'
 import { useProjectStore } from '../store/useProjectStore'
 import { compileGraph } from '../editor/compiler/compile'
@@ -14,6 +14,25 @@ export default function CodePanel({ onClose }: CodePanelProps) {
 
   const [result, setResult] = useState<{ code: string; errors: string[]; warnings: string[] } | null>(null)
   const [copied, setCopied] = useState(false)
+  const [height, setHeight] = useState(320)
+  const drag = useRef({ active: false, startY: 0, startH: 0 })
+
+  function onResizeMouseDown(e: React.MouseEvent) {
+    e.preventDefault()
+    drag.current = { active: true, startY: e.clientY, startH: height }
+    const onMove = (ev: MouseEvent) => {
+      if (!drag.current.active) return
+      const next = Math.max(120, Math.min(window.innerHeight * 0.85, drag.current.startH + drag.current.startY - ev.clientY))
+      setHeight(next)
+    }
+    const onUp = () => {
+      drag.current.active = false
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
 
   useEffect(() => {
     const compiled = compileGraph(nodes, edges, projectName)
@@ -44,14 +63,27 @@ export default function CodePanel({ onClose }: CodePanelProps) {
   return (
     <div
       style={{
-        height: 320,
+        height,
         background: '#0d0e14',
         borderTop: '1px solid #1e1e2e',
         display: 'flex',
         flexDirection: 'column',
         flexShrink: 0,
+        position: 'relative',
       }}
     >
+      {/* Resize handle */}
+      <div
+        onMouseDown={onResizeMouseDown}
+        title="Drag to resize"
+        style={{
+          position: 'absolute', top: 0, left: 0, right: 0, height: 4,
+          cursor: 'ns-resize', zIndex: 10,
+          background: 'transparent', transition: 'background 0.15s',
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.background = '#7c3aed66' }}
+        onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+      />
       {/* Panel header */}
       <div
         style={{

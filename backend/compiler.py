@@ -127,7 +127,8 @@ def infer_shapes(sorted_nodes: list[dict], edges: list[dict]) -> dict[str, NodeS
             in_w = first_parent_shape.width if isinstance(first_parent_shape, SpatialShape) else 1
             k = int(data.get("kernelSize", 2))
             s = int(data.get("stride", k))
-            shapes[nid] = SpatialShape(channels=in_c, height=conv_dim(in_h, k, s, 0), width=conv_dim(in_w, k, s, 0))
+            p = int(data.get("padding", 0))
+            shapes[nid] = SpatialShape(channels=in_c, height=conv_dim(in_h, k, s, p), width=conv_dim(in_w, k, s, p))
 
         elif ntype == "adaptiveAvgPool2dNode":
             in_c = first_parent_shape.channels if isinstance(first_parent_shape, SpatialShape) else 1
@@ -313,30 +314,46 @@ def build_model(graph: dict) -> tuple[GraphModel, list[str]]:
             in_c = first_parent_shape.channels if isinstance(first_parent_shape, SpatialShape) else 1
             out_c = int(data.get("outChannels", 32))
             k, s, p = int(data.get("kernelSize", 3)), int(data.get("stride", 1)), int(data.get("padding", 0))
+            dil = int(data.get("dilation", 1))
+            grp = int(data.get("groups", 1))
+            bias = bool(data.get("bias", True))
+            pmode = str(data.get("paddingMode", "zeros"))
             attr = f"conv_{safe_id}"
-            setattr(model, attr, nn.Conv2d(in_c, out_c, kernel_size=k, stride=s, padding=p))
+            setattr(model, attr, nn.Conv2d(in_c, out_c, kernel_size=k, stride=s, padding=p,
+                                           dilation=dil, groups=grp, bias=bias, padding_mode=pmode))
             ops.append(Op(kind="conv2d", node_id=nid, layer_attr=attr, activation=str(data.get("activation", "relu")), input_node_ids=node_parents))
 
         elif ntype == "conv1dNode":
             in_f = flat_features(first_parent_shape) if first_parent_shape else 1
             out_c = int(data.get("outChannels", 64))
             k, s, p = int(data.get("kernelSize", 3)), int(data.get("stride", 1)), int(data.get("padding", 1))
+            dil = int(data.get("dilation", 1))
+            grp = int(data.get("groups", 1))
+            bias = bool(data.get("bias", True))
             attr = f"conv1d_{safe_id}"
-            setattr(model, attr, nn.Conv1d(in_f, out_c, kernel_size=k, stride=s, padding=p))
+            setattr(model, attr, nn.Conv1d(in_f, out_c, kernel_size=k, stride=s, padding=p,
+                                           dilation=dil, groups=grp, bias=bias))
             ops.append(Op(kind="conv1d", node_id=nid, layer_attr=attr, activation=str(data.get("activation", "relu")), input_node_ids=node_parents))
 
         elif ntype == "maxPool2dNode":
             k = int(data.get("kernelSize", 2))
             s = int(data.get("stride", k))
+            pad = int(data.get("padding", 0))
+            dil = int(data.get("dilation", 1))
+            ceil_mode = bool(data.get("ceilMode", False))
             attr = f"pool_{safe_id}"
-            setattr(model, attr, nn.MaxPool2d(kernel_size=k, stride=s))
+            setattr(model, attr, nn.MaxPool2d(kernel_size=k, stride=s, padding=pad, dilation=dil, ceil_mode=ceil_mode))
             ops.append(Op(kind="pool", node_id=nid, layer_attr=attr, input_node_ids=node_parents))
 
         elif ntype == "avgPool2dNode":
             k = int(data.get("kernelSize", 2))
             s = int(data.get("stride", k))
+            pad = int(data.get("padding", 0))
+            ceil_mode = bool(data.get("ceilMode", False))
+            count_pad = bool(data.get("countIncludePad", True))
             attr = f"avgpool_{safe_id}"
-            setattr(model, attr, nn.AvgPool2d(kernel_size=k, stride=s))
+            setattr(model, attr, nn.AvgPool2d(kernel_size=k, stride=s, padding=pad,
+                                              ceil_mode=ceil_mode, count_include_pad=count_pad))
             ops.append(Op(kind="avgpool", node_id=nid, layer_attr=attr, input_node_ids=node_parents))
 
         elif ntype == "adaptiveAvgPool2dNode":
@@ -356,12 +373,16 @@ def build_model(graph: dict) -> tuple[GraphModel, list[str]]:
         elif ntype == "batchNormNode":
             eps = float(data.get("eps", 1e-5))
             mom = float(data.get("momentum", 0.1))
+            affine = bool(data.get("affine", True))
+            track = bool(data.get("trackRunningStats", True))
             attr = f"bn_{safe_id}"
             if isinstance(first_parent_shape, SpatialShape):
-                setattr(model, attr, nn.BatchNorm2d(first_parent_shape.channels, eps=eps, momentum=mom))
+                setattr(model, attr, nn.BatchNorm2d(first_parent_shape.channels, eps=eps, momentum=mom,
+                                                    affine=affine, track_running_stats=track))
             else:
                 nf = flat_features(first_parent_shape) if first_parent_shape else 1
-                setattr(model, attr, nn.BatchNorm1d(nf, eps=eps, momentum=mom))
+                setattr(model, attr, nn.BatchNorm1d(nf, eps=eps, momentum=mom,
+                                                    affine=affine, track_running_stats=track))
             ops.append(Op(kind="batchnorm", node_id=nid, layer_attr=attr, input_node_ids=node_parents))
 
         elif ntype == "activationNode":
@@ -394,8 +415,10 @@ def build_model(graph: dict) -> tuple[GraphModel, list[str]]:
             layers = int(data.get("numLayers", 1))
             drop = float(data.get("dropout", 0))
             bidir = bool(data.get("bidirectional", False))
+            proj = int(data.get("projSize", 0))
             attr = f"lstm_{safe_id}"
-            setattr(model, attr, nn.LSTM(in_f, hidden, num_layers=layers, dropout=drop, bidirectional=bidir, batch_first=True))
+            setattr(model, attr, nn.LSTM(in_f, hidden, num_layers=layers, dropout=drop,
+                                         bidirectional=bidir, batch_first=True, proj_size=proj))
             ops.append(Op(kind="lstm", node_id=nid, layer_attr=attr, input_node_ids=node_parents, extra={"bidirectional": bidir}))
 
         elif ntype == "transformerEncoderNode":
@@ -408,7 +431,11 @@ def build_model(graph: dict) -> tuple[GraphModel, list[str]]:
             proj_attr = f"te_proj_{safe_id}"
             enc_attr = f"te_{safe_id}"
             setattr(model, proj_attr, nn.Linear(in_f, d_model))
-            enc_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dim_feedforward=ff_dim, dropout=drop, batch_first=True)
+            te_act = str(data.get("activation", "relu"))
+            norm_first = bool(data.get("normFirst", False))
+            enc_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dim_feedforward=ff_dim,
+                                                   dropout=drop, activation=te_act, norm_first=norm_first,
+                                                   batch_first=True)
             setattr(model, enc_attr, nn.TransformerEncoder(enc_layer, num_layers=num_layers))
             ops.append(Op(kind="transformer_encoder", node_id=nid, layer_attr=proj_attr, input_node_ids=node_parents, extra={"encoder_attr": enc_attr}))
 

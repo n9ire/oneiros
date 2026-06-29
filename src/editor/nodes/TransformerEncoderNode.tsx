@@ -9,6 +9,8 @@ interface TransformerEncoderData extends Record<string, unknown> {
   dimFeedforward: number
   numLayers: number
   dropout: number
+  activation: string
+  normFirst: boolean
 }
 
 type TransformerEncoderNodeType = Node<TransformerEncoderData, 'transformerEncoderNode'>
@@ -50,6 +52,8 @@ registerNode({
     dimFeedforward: 512,
     numLayers: 2,
     dropout: 0.1,
+    activation: 'relu',
+    normFirst: false,
   },
   fields: [
     { key: 'dModel', label: 'd_model', type: 'number', min: 1 },
@@ -57,6 +61,16 @@ registerNode({
     { key: 'dimFeedforward', label: 'FF Dim', type: 'number', min: 1 },
     { key: 'numLayers', label: 'Num Layers', type: 'number', min: 1 },
     { key: 'dropout', label: 'Dropout', type: 'number', min: 0, max: 1, step: 0.05 },
+    {
+      key: 'activation',
+      label: 'Activation',
+      type: 'select',
+      options: [
+        { value: 'relu', label: 'ReLU' },
+        { value: 'gelu', label: 'GELU' },
+      ],
+    },
+    { key: 'normFirst', label: 'Pre-Norm (norm first)', type: 'boolean' },
   ],
   component: TransformerEncoderNode,
 })

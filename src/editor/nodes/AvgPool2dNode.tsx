@@ -6,6 +6,9 @@ interface AvgPool2dData extends Record<string, unknown> {
   label: string
   kernelSize: number
   stride: number
+  padding: number
+  ceilMode: boolean
+  countIncludePad: boolean
 }
 
 type AvgPool2dNodeType = Node<AvgPool2dData, 'avgPool2dNode'>
@@ -28,6 +31,7 @@ function AvgPool2dNode({ id, data, selected }: NodeProps<AvgPool2dNodeType>) {
     >
       <NodeRow label="Kernel" value={`${data.kernelSize}×${data.kernelSize}`} />
       <NodeRow label="Stride" value={data.stride} />
+      {(data.padding as number) > 0 && <NodeRow label="Padding" value={data.padding} />}
     </BaseNode>
   )
 }
@@ -41,10 +45,16 @@ registerNode({
     label: 'AvgPool2d',
     kernelSize: 2,
     stride: 2,
+    padding: 0,
+    ceilMode: false,
+    countIncludePad: true,
   },
   fields: [
     { key: 'kernelSize', label: 'Kernel Size', type: 'number', min: 1 },
     { key: 'stride', label: 'Stride', type: 'number', min: 1 },
+    { key: 'padding', label: 'Padding', type: 'number', min: 0 },
+    { key: 'ceilMode', label: 'Ceil Mode', type: 'boolean' },
+    { key: 'countIncludePad', label: 'Count Include Pad', type: 'boolean' },
   ],
   component: AvgPool2dNode,
 })

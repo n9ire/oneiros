@@ -26,6 +26,7 @@ from datasets import get_loaders, get_dataset_info, list_datasets, make_custom_l
 from trainer import run_training_async
 from ai import chat as ai_chat
 from plotter import generate_plot, CHART_DEFS, PALETTES
+from xgboost_trainer import train_xgboost, REGRESSION_OBJECTIVES
 
 # ── App setup ──────────────────────────────────────────────────────────────────
 
@@ -47,6 +48,9 @@ active_runs: dict[str, dict[str, Any]] = {}
 
 # Store trained models for export (run_id → {"model": nn.Module, "graph": dict})
 trained_models: dict[str, dict[str, Any]] = {}
+
+# Store trained XGBoost models for export (run_id → base64 model string)
+xgb_models: dict[str, str] = {}
 
 
 # ── Request / response models ─────────────────────────────────────────────────
@@ -141,6 +145,59 @@ async def plot(request: Request) -> StreamingResponse:
     )
 
 
+@app.get("/api/xgboost/meta")
+async def xgboost_meta() -> dict:
+    """Return static metadata used by the XGBoost UI (regression objectives etc.)."""
+    return {"regressionObjectives": REGRESSION_OBJECTIVES}
+
+
+@app.post("/api/xgboost/train")
+async def xgboost_train(request: Request) -> dict:
+    """Train an XGBoost model and return metrics + feature importance."""
+    from fastapi.responses import JSONResponse
+    try:
+        body = await request.json()
+    except Exception as exc:
+        return JSONResponse({"error": f"Invalid JSON: {exc}"}, status_code=400)
+
+    data   = body.get("data", {})
+    config = body.get("config", {})
+
+    if not data.get("X_train"):
+        return JSONResponse({"error": "No training data provided. Load a CSV dataset and set a target column."}, status_code=422)
+
+    try:
+        result = train_xgboost(data, config)
+    except RuntimeError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=503)
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"error": f"XGBoost training failed: {exc}"}, status_code=500)
+
+    run_id = str(uuid.uuid4())
+    xgb_models[run_id] = result.pop("modelB64")
+    result["runId"] = run_id
+    return result
+
+
+@app.get("/api/xgboost/{run_id}/export")
+async def xgboost_export(run_id: str) -> StreamingResponse:
+    """Download the trained XGBoost model as a JSON file."""
+    model_b64 = xgb_models.get(run_id)
+    if not model_b64:
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"error": "Model not found — train first."}, status_code=404)
+
+    import base64
+    model_bytes = base64.b64decode(model_b64)
+    return StreamingResponse(
+        io.BytesIO(model_bytes),
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": 'attachment; filename="xgboost_model.json"'},
+    )
+
+
 @app.post("/api/compile")
 async def compile_graph(req: CompileRequest) -> dict:
     graph = {"nodes": req.nodes, "edges": req.edges}
@@ -166,7 +223,11 @@ async def ai_chat_endpoint(req: AIChatRequest) -> dict:
 @app.post("/api/train/start")
 async def start_training(req: TrainRequest) -> dict:
     run_id = str(uuid.uuid4())
+    stop_event = asyncio.Event()
     pending_runs[run_id] = req
+    # Register the stop event immediately so /api/train/stop works even before
+    # the WebSocket handler has had a chance to build the model or load data.
+    active_runs[run_id] = {"stop": stop_event}
     return {"runId": run_id}
 
 
@@ -304,8 +365,28 @@ async def training_websocket(websocket: WebSocket, run_id: str) -> None:
         return
 
     queue: asyncio.Queue[dict] = asyncio.Queue()
-    stop_event = asyncio.Event()
+    # Reuse the stop event that was pre-registered in /api/train/start so that
+    # a stop request that arrives before the WebSocket is fully set up still works.
+    run = active_runs.get(run_id)
+    stop_event = run["stop"] if run else asyncio.Event()
     active_runs[run_id] = {"stop": stop_event}
+
+    # Dry-run: forward one sample through the model before training starts.
+    # This catches shape mismatches (wrong Input node size) immediately with a
+    # clear error message rather than crashing silently at epoch 1.
+    try:
+        dummy_batch, _ = next(iter(train_loader))
+        with torch.no_grad():
+            model(dummy_batch[:1])
+    except Exception as shape_exc:
+        msg = str(shape_exc)
+        hint = ""
+        if "cannot be multiplied" in msg or "size mismatch" in msg.lower():
+            hint = " — Check that your Input node dimensions match your dataset (for a CSV with N features set channels=N, height=1, width=1)."
+        await websocket.send_json({"type": "error", "message": f"Shape mismatch: {msg}{hint}"})
+        await websocket.close()
+        active_runs.pop(run_id, None)
+        return
 
     config_dict = req.config.model_dump()
 
@@ -347,7 +428,18 @@ async def training_websocket(websocket: WebSocket, run_id: str) -> None:
             pass
     finally:
         stop_event.set()
-        await training_task
+        # Await the training task separately so that any exception it raises
+        # (e.g. shape mismatch, CUDA OOM) gets forwarded to the client as an
+        # error message rather than crashing the WebSocket handler silently.
+        try:
+            await training_task
+        except Exception as task_exc:
+            import traceback
+            traceback.print_exc()
+            try:
+                await websocket.send_json({"type": "error", "message": f"Training error: {task_exc}"})
+            except Exception:
+                pass
         active_runs.pop(run_id, None)
         try:
             await websocket.close()

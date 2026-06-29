@@ -770,7 +770,7 @@ const indexCellStyle: React.CSSProperties = {
 
 // ── Shared components ─────────────────────────────────────────────────────────
 
-function TabBtn({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string }) {
+function TabBtn({ active, onClick, icon, label, accent }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string; accent?: boolean }) {
   return (
     <button
       onClick={onClick}
@@ -778,8 +778,8 @@ function TabBtn({ active, onClick, icon, label }: { active: boolean; onClick: ()
         display: 'flex', alignItems: 'center', gap: 5,
         padding: '4px 9px', borderRadius: 4,
         border: 'none',
-        background: active ? '#27272a' : 'transparent',
-        color: active ? '#e4e4e7' : '#71717a',
+        background: active ? (accent ? 'rgba(245,158,11,0.18)' : '#27272a') : 'transparent',
+        color: active ? (accent ? '#fbbf24' : '#e4e4e7') : '#71717a',
         fontSize: 11, fontWeight: 500, cursor: 'pointer',
       }}
     >

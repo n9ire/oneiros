@@ -7,6 +7,7 @@ back to the WebSocket handler via a thread-safe asyncio.Queue.
 from __future__ import annotations
 
 import asyncio
+import math
 import time
 from typing import Any, Callable
 
@@ -50,12 +51,51 @@ def _train_epoch(
 
         data, target = data.to(device), target.to(device)
         optimizer.zero_grad()
-        output = model(data)
+        try:
+            output = model(data)
+        except RuntimeError as exc:
+            msg = str(exc)
+            if "mat1 and mat2 shapes cannot be multiplied" in msg or "size mismatch" in msg.lower():
+                raise RuntimeError(
+                    f"Shape mismatch in forward pass: {msg}. "
+                    "Check that your Input node dimensions match your data "
+                    "(for a CSV with N features set channels=N, height=1, width=1)."
+                ) from exc
+            if "out of memory" in msg.lower():
+                raise RuntimeError(
+                    "CUDA out of memory. Try: reduce batch size, use a smaller model, "
+                    "or add more Dropout/pooling layers."
+                ) from exc
+            raise
+
         loss = criterion(output, target)
+
+        loss_val = loss.item()
+        if math.isnan(loss_val):
+            raise RuntimeError(
+                f"Loss became NaN at epoch {epoch}, batch {batch_idx + 1}. "
+                "Try: lower the learning rate, add BatchNorm, check for zero-length "
+                "sequences, or ensure your target labels are in the correct range."
+            )
+        if math.isinf(loss_val):
+            raise RuntimeError(
+                f"Loss exploded to Inf at epoch {epoch}, batch {batch_idx + 1}. "
+                "Try: lower the learning rate or add gradient clipping."
+            )
+
         loss.backward()
+
+        # Warn on gradient explosion (but don't stop — user may have clipping)
+        max_grad = max(
+            (p.grad.abs().max().item() for p in model.parameters() if p.grad is not None),
+            default=0.0,
+        )
+        if max_grad > 1e4:
+            send(_msg("warning", message=f"Very large gradient detected ({max_grad:.1e}) at epoch {epoch} batch {batch_idx+1} — consider adding gradient clipping or lowering lr."))
+
         optimizer.step()
 
-        total_loss += loss.item()
+        total_loss += loss_val
 
         if batch_idx % max(1, total_batches // 20) == 0 or batch_idx == total_batches - 1:
             send(_msg(

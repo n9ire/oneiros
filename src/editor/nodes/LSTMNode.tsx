@@ -8,6 +8,7 @@ interface LSTMData extends Record<string, unknown> {
   numLayers: number
   dropout: number
   bidirectional: boolean
+  projSize: number
 }
 
 type LSTMNodeType = Node<LSTMData, 'lstmNode'>
@@ -49,10 +50,12 @@ registerNode({
     numLayers: 1,
     dropout: 0,
     bidirectional: false,
+    projSize: 0,
   },
   fields: [
     { key: 'hiddenSize', label: 'Hidden Size', type: 'number', min: 1 },
     { key: 'numLayers', label: 'Num Layers', type: 'number', min: 1 },
+    { key: 'projSize', label: 'Proj Size (0 = off)', type: 'number', min: 0 },
     { key: 'dropout', label: 'Dropout', type: 'number', min: 0, max: 1, step: 0.05 },
     {
       key: 'bidirectional',

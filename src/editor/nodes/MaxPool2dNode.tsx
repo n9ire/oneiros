@@ -6,6 +6,9 @@ interface MaxPool2dData extends Record<string, unknown> {
   label: string
   kernelSize: number
   stride: number
+  padding: number
+  dilation: number
+  ceilMode: boolean
 }
 
 type MaxPool2dNodeType = Node<MaxPool2dData, 'maxPool2dNode'>
@@ -27,6 +30,8 @@ function MaxPool2dNode({ id, data, selected }: NodeProps<MaxPool2dNodeType>) {
     >
       <NodeRow label="Kernel" value={`${data.kernelSize}×${data.kernelSize}`} />
       <NodeRow label="Stride" value={data.stride} />
+      {(data.padding as number) > 0 && <NodeRow label="Padding" value={data.padding} />}
+      {(data.dilation as number) > 1 && <NodeRow label="Dilation" value={data.dilation} />}
     </BaseNode>
   )
 }
@@ -40,10 +45,16 @@ registerNode({
     label: 'MaxPool2d',
     kernelSize: 2,
     stride: 2,
+    padding: 0,
+    dilation: 1,
+    ceilMode: false,
   },
   fields: [
     { key: 'kernelSize', label: 'Kernel Size', type: 'number', min: 1 },
     { key: 'stride', label: 'Stride', type: 'number', min: 1 },
+    { key: 'padding', label: 'Padding', type: 'number', min: 0 },
+    { key: 'dilation', label: 'Dilation', type: 'number', min: 1 },
+    { key: 'ceilMode', label: 'Ceil Mode', type: 'boolean' },
   ],
   component: MaxPool2dNode,
 })

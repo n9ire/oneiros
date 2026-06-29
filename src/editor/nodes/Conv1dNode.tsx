@@ -8,6 +8,9 @@ interface Conv1dData extends Record<string, unknown> {
   kernelSize: number
   stride: number
   padding: number
+  dilation: number
+  groups: number
+  bias: boolean
   activation: string
 }
 
@@ -47,6 +50,9 @@ registerNode({
     kernelSize: 3,
     stride: 1,
     padding: 1,
+    dilation: 1,
+    groups: 1,
+    bias: true,
     activation: 'relu',
   },
   fields: [
@@ -54,6 +60,9 @@ registerNode({
     { key: 'kernelSize', label: 'Kernel Size', type: 'number', min: 1 },
     { key: 'stride', label: 'Stride', type: 'number', min: 1 },
     { key: 'padding', label: 'Padding', type: 'number', min: 0 },
+    { key: 'dilation', label: 'Dilation', type: 'number', min: 1 },
+    { key: 'groups', label: 'Groups', type: 'number', min: 1 },
+    { key: 'bias', label: 'Bias', type: 'boolean' },
     {
       key: 'activation',
       label: 'Activation',
@@ -64,6 +73,7 @@ registerNode({
         { value: 'silu', label: 'SiLU' },
         { value: 'elu', label: 'ELU' },
         { value: 'leaky_relu', label: 'Leaky ReLU' },
+        { value: 'mish', label: 'Mish' },
         { value: 'none', label: 'None' },
       ],
     },

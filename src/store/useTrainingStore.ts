@@ -6,11 +6,13 @@ import type {
   TrainingMessage,
   CustomDatasetPayload,
 } from '../types/training'
+import type { ValidationIssue } from '../types/validation'
 import { DEFAULT_CONFIG } from '../types/training'
 import { TrainingSocket } from '../services/trainingSocket'
 import { useGraphStore } from './useGraphStore'
 import { useDatasetStore } from './useDatasetStore'
 import { executePipeline } from '../editor/dataset/pipelineExecutor'
+import { validateGraph } from '../editor/validation/validateGraph'
 
 const API_BASE = 'http://localhost:8000'
 
@@ -32,17 +34,47 @@ interface TrainingState {
   // Custom dataset info (set when using CSV data)
   customDatasetInfo: CustomDatasetPayload | null
 
+  preflightIssues: ValidationIssue[]
+
   setConfig: (patch: Partial<TrainingConfig>) => void
   startTraining: () => Promise<void>
   stopTraining: () => Promise<void>
 
-  // Model export
+  // Model export (NN)
   exportWeights: () => void
   exportONNX: () => void
   exportFull: () => void
 
+  // XGBoost
+  xgbStatus: 'idle' | 'running' | 'complete' | 'error'
+  xgbResult: XGBResult | null
+  xgbError: string | null
+  trainXGBoost: () => Promise<void>
+  exportXGB: () => void
+
   _socket: TrainingSocket | null
   _handleMessage: (msg: TrainingMessage) => void
+}
+
+export interface XGBResult {
+  task: 'classification' | 'regression'
+  // Classification
+  trainAccuracy?: number
+  valAccuracy?: number
+  nClasses?: number
+  // Regression
+  trainRMSE?: number
+  valRMSE?: number
+  trainMAE?: number
+  valMAE?: number
+  valR2?: number
+  objective?: string
+  // Common
+  bestIteration: number
+  nEstimators: number
+  featureImportance: { name: string; importance: number }[]
+  evals: { round: number; trainLoss: number; valLoss: number }[]
+  runId: string
 }
 
 export const useTrainingStore = create<TrainingState>((set, get) => ({
@@ -61,7 +93,13 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
   errorMessage: null,
   customDatasetInfo: null,
 
+  preflightIssues: [],
+
   _socket: null,
+
+  xgbStatus: 'idle',
+  xgbResult: null,
+  xgbError: null,
 
   setConfig(patch) {
     set((s) => ({ config: { ...s.config, ...patch } }))
@@ -69,7 +107,7 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
 
   async startTraining() {
     const { config, _handleMessage } = get()
-    const graph = useGraphStore.getState().exportGraph()
+    const { nodes, edges } = useGraphStore.getState().exportGraph()
 
     // Build custom dataset payload if CSV mode is selected
     let customDataset: CustomDatasetPayload | null = null
@@ -92,6 +130,18 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
       customDataset = result.data
     }
 
+    // Pre-flight graph validation
+    const opts = config.dataset === 'custom' && customDataset
+      ? { customFeatureCount: customDataset.featureCount, customClassCount: customDataset.classCount }
+      : {}
+    const { issues, isValid } = validateGraph(nodes, edges, opts)
+    set({ preflightIssues: issues })
+    if (!isValid) {
+      const errorCount = issues.filter(i => i.severity === 'error').length
+      set({ status: 'error', errorMessage: `Fix ${errorCount} error${errorCount > 1 ? 's' : ''} in your graph before training.` })
+      return
+    }
+
     set({
       status: 'connecting',
       statusMessage: 'Connecting to backend…',
@@ -109,7 +159,7 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
       const res = await fetch(`${API_BASE}/api/train/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ graph, config, customDataset }),
+        body: JSON.stringify({ graph: { nodes, edges }, config, customDataset }),
       })
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -148,13 +198,84 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
     window.open(`${API_BASE}/api/export/${runId}/full?filename=model_full.pt`, '_blank')
   },
 
+  async trainXGBoost() {
+    const { config } = get()
+    const dsState = useDatasetStore.getState()
+
+    if (!dsState.dataset || !dsState.targetColumn) {
+      set({ xgbStatus: 'error', xgbError: 'Load a CSV dataset and set a target column first.' })
+      return
+    }
+
+    const result = executePipeline(
+      dsState.dataset,
+      dsState.targetColumn,
+      dsState.pipelineNodes,
+      dsState.pipelineEdges,
+    )
+    if (!result.ok) {
+      set({ xgbStatus: 'error', xgbError: result.error })
+      return
+    }
+
+    set({ xgbStatus: 'running', xgbError: null, xgbResult: null })
+
+    try {
+      const res = await fetch(`${API_BASE}/api/xgboost/train`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          data: result.data,
+          config: {
+            task:                 config.xgbTask,
+            objective:            config.xgbObjective || undefined,
+            nEstimators:          config.xgbNEstimators,
+            maxDepth:             config.xgbMaxDepth,
+            learningRate:         config.xgbLearningRate,
+            subsample:            config.xgbSubsample,
+            colsampleBytree:      config.xgbColsampleBytree,
+            minChildWeight:       config.xgbMinChildWeight,
+            gamma:                config.xgbGamma,
+            regAlpha:             config.xgbRegAlpha,
+            regLambda:            config.xgbRegLambda,
+            earlyStoppingRounds:  config.xgbEarlyStoppingRounds,
+          },
+        }),
+      })
+
+      const json = await res.json()
+      if (!res.ok) {
+        set({ xgbStatus: 'error', xgbError: json.error ?? `HTTP ${res.status}` })
+        return
+      }
+
+      set({ xgbStatus: 'complete', xgbResult: json as import('../store/useTrainingStore').XGBResult })
+    } catch (err) {
+      set({ xgbStatus: 'error', xgbError: err instanceof Error ? err.message : 'Request failed' })
+    }
+  },
+
+  exportXGB() {
+    const { xgbResult } = get()
+    if (!xgbResult?.runId) return
+    window.open(`${API_BASE}/api/xgboost/${xgbResult.runId}/export`, '_blank')
+  },
+
   async stopTraining() {
-    const { runId } = get()
-    if (!runId) return
+    const { runId, _socket } = get()
+
+    // Always close the socket immediately so the UI transitions out of running
+    _socket?.close()
+    set({ status: 'stopped', statusMessage: 'Training stopped', _socket: null })
+
+    if (!runId) {
+      // Clicked Stop before runId was returned — nothing more to do
+      return
+    }
     try {
       await fetch(`${API_BASE}/api/train/stop/${runId}`, { method: 'POST' })
     } catch {
-      // ignore network error — the stop event will fire via WebSocket
+      // Network error is fine — the stop event fires on WebSocketDisconnect too
     }
   },
 
@@ -190,6 +311,9 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
         etaSecs: msg.etaSecs as number,
         statusMessage: `Epoch ${msg.epoch} / ${msg.totalEpochs} — val acc ${((msg.valAccuracy as number) * 100).toFixed(1)}%`,
       }))
+    } else if (type === 'warning') {
+      // Non-fatal warning — append to statusMessage so the user sees it
+      set({ statusMessage: `⚠ ${msg.message as string}` })
     } else if (type === 'complete') {
       get()._socket?.close()
       set({ status: 'complete', statusMessage: 'Training complete', _socket: null })
