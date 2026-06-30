@@ -122,6 +122,21 @@ function expandOneHot(
   return { newRows, newColNames }
 }
 
+// ── Additional transform helpers ──────────────────────────────────────────────
+
+function colMean(X: number[][], j: number): number {
+  return X.reduce((s, r) => s + r[j], 0) / X.length
+}
+function colMedian(X: number[][], j: number): number {
+  const sorted = X.map((r) => r[j]).sort((a, b) => a - b)
+  const m = Math.floor(sorted.length / 2)
+  return sorted.length % 2 === 0 ? (sorted[m - 1] + sorted[m]) / 2 : sorted[m]
+}
+function colStd(X: number[][], j: number, mean: number): number {
+  const variance = X.reduce((s, r) => s + (r[j] - mean) ** 2, 0) / X.length
+  return Math.sqrt(variance) || 1
+}
+
 // ── Main executor ─────────────────────────────────────────────────────────────
 
 export function executePipeline(
@@ -146,6 +161,29 @@ export function executePipeline(
   let doOneHot = false
   let oneHotColumns: string[] = []
 
+  // New transform state flags
+  let doStandardScaler = false
+  let standardScalerColumns: string[] = []
+  let doLogTransform = false
+  let logTransformColumns: string[] = []
+  let doFillNaN = false
+  let fillNaNStrategy = 'mean'
+  let fillNaNConstant = 0
+  let doDropColumns = false
+  let dropColumnsList: string[] = []
+  let doClipOutliers = false
+  let clipStdFactor = 3
+  let doBinColumn = false
+  let binColumn = ''
+  let binCount = 5
+  let binStrategy = 'equal-width'
+  let doSelectKBest = false
+  let selectK = 10
+  let doOrdinalEncode = false
+  let ordinalEncodeColumns: string[] = []
+  let doBalance = false
+  let doDropDuplicates = false
+
   // Walk pipeline nodes in topological order
   const sorted = topoSort(pipelineNodes, pipelineEdges)
   for (const node of sorted) {
@@ -153,26 +191,93 @@ export function executePipeline(
     switch (node.type) {
       case 'datasetSource':
         break
+
       case 'normalizeNode':
         normalize = true
         normalizeMethod = (data.method as string) === 'zscore' ? 'zscore' : 'min-max'
         normalizeColumns = data.columns
-          ? String(data.columns)
-              .split(',')
-              .map((s) => s.trim())
-              .filter(Boolean)
+          ? String(data.columns).split(',').map((s) => s.trim()).filter(Boolean)
           : []
         break
+
+      case 'standardScalerNode':
+        doStandardScaler = true
+        standardScalerColumns = data.columns
+          ? String(data.columns).split(',').map((s) => s.trim()).filter(Boolean)
+          : []
+        break
+
+      case 'logTransformNode':
+        doLogTransform = true
+        logTransformColumns = data.columns
+          ? String(data.columns).split(',').map((s) => s.trim()).filter(Boolean)
+          : []
+        break
+
+      case 'clipOutliersNode':
+        doClipOutliers = true
+        clipStdFactor = typeof data.stdFactor === 'number' ? data.stdFactor : 3
+        break
+
+      case 'binColumnNode':
+        doBinColumn = true
+        binColumn  = String(data.column ?? '')
+        binCount   = typeof data.bins === 'number' ? data.bins : 5
+        binStrategy = String(data.strategy ?? 'equal-width')
+        break
+
+      case 'fillNaNNode':
+        doFillNaN = true
+        fillNaNStrategy  = String(data.strategy ?? 'mean')
+        fillNaNConstant  = typeof data.constant === 'number' ? data.constant : 0
+        break
+
+      case 'dropColumnsNode':
+        doDropColumns = true
+        dropColumnsList = data.columns
+          ? String(data.columns).split(',').map((s) => s.trim()).filter(Boolean)
+          : []
+        break
+
+      case 'dropDuplicatesNode':
+        doDropDuplicates = true
+        break
+
+      case 'selectKBestNode':
+        doSelectKBest = true
+        selectK = typeof data.k === 'number' ? data.k : 10
+        break
+
+      case 'balanceClassesNode':
+        doBalance = true
+        break
+
+      case 'oneHotEncodeNode':
+        doOneHot = true
+        oneHotColumns = data.columns
+          ? String(data.columns).split(',').map((s) => s.trim()).filter(Boolean)
+          : []
+        break
+
+      case 'ordinalEncodeNode':
+        doOrdinalEncode = true
+        ordinalEncodeColumns = data.columns
+          ? String(data.columns).split(',').map((s) => s.trim()).filter(Boolean)
+          : []
+        break
+
       case 'shuffleNode':
         doShuffle = true
         shuffleSeed = typeof data.seed === 'number' ? data.seed : 42
         break
+
       case 'splitNode':
         trainRatio = typeof data.trainRatio === 'number' ? data.trainRatio : 0.8
         break
+
       case 'filterNode': {
         const col = String(data.column ?? '')
-        const op = String(data.operator ?? '>')
+        const op  = String(data.operator ?? '>')
         const val = parseFloat(String(data.value ?? '0'))
         if (col) {
           rows = rows.filter((row) => {
@@ -188,34 +293,55 @@ export function executePipeline(
         }
         break
       }
-      case 'oneHotEncodeNode':
-        doOneHot = true
-        oneHotColumns = data.columns
-          ? String(data.columns)
-              .split(',')
-              .map((s) => s.trim())
-              .filter(Boolean)
-          : []
-        break
     }
   }
 
+  // ── Apply row-level transforms ────────────────────────────────────────────
+
+  // Drop duplicates
+  if (doDropDuplicates) {
+    const seen = new Set<string>()
+    rows = rows.filter((row) => {
+      const key = JSON.stringify(row)
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+  }
+
+  // Drop named columns
+  if (doDropColumns && dropColumnsList.length > 0) {
+    rows = rows.map((row) => {
+      const out = { ...row }
+      for (const col of dropColumnsList) delete out[col]
+      return out
+    })
+  }
+
   if (rows.length < 4) {
-    return { ok: false, error: 'Dataset has too few rows after filtering.' }
+    return { ok: false, error: 'Dataset has too few rows after filtering/deduplication.' }
   }
 
   // Shuffle
   if (doShuffle) rows = seededShuffle(rows, shuffleSeed)
 
+  // Ordinal encode before one-hot
+  if (doOrdinalEncode) {
+    const colsToEncode = ordinalEncodeColumns.length > 0
+      ? ordinalEncodeColumns
+      : dataset.columns.filter((c) => c.type === 'string' && c.name !== targetColumn).map((c) => c.name)
+    for (const colName of colsToEncode) {
+      const uniq = [...new Set(rows.map((r) => String(r[colName])))].sort()
+      const map = new Map(uniq.map((v, i) => [v, i]))
+      rows = rows.map((row) => ({ ...row, [colName]: map.get(String(row[colName])) ?? 0 }))
+    }
+  }
+
   // One-hot encode categorical feature columns
   if (doOneHot) {
-    const colsToEncode =
-      oneHotColumns.length > 0
-        ? oneHotColumns
-        : dataset.columns
-            .filter((c) => c.type === 'string' && c.name !== targetColumn)
-            .map((c) => c.name)
-
+    const colsToEncode = oneHotColumns.length > 0
+      ? oneHotColumns
+      : dataset.columns.filter((c) => c.type === 'string' && c.name !== targetColumn).map((c) => c.name)
     for (const colName of colsToEncode) {
       const uniq = [...new Set(rows.map((r) => String(r[colName])))]
       const result = expandOneHot(rows, colName, uniq)
@@ -225,7 +351,7 @@ export function executePipeline(
 
   // Determine feature columns (all remaining numeric cols except target)
   const sampleRow = rows[0]
-  const featureNames = Object.keys(sampleRow).filter(
+  let featureNames = Object.keys(sampleRow).filter(
     (k) => k !== targetColumn && typeof sampleRow[k] === 'number',
   )
 
@@ -243,26 +369,118 @@ export function executePipeline(
   const rawTargets = rows.map((r) => r[targetColumn])
   const { encoded: y, classes: classNames } = encodeLabels(rawTargets)
 
-  // Normalise feature matrix
-  if (normalize) {
-    const colsToNorm =
-      normalizeColumns.length > 0
-        ? normalizeColumns.map((c) => featureNames.indexOf(c)).filter((i) => i >= 0)
-        : null // null = all
+  // ── Apply column-level transforms ─────────────────────────────────────────
 
-    if (colsToNorm === null) {
-      X = normalizeMethod === 'zscore' ? zscoreNorm(X) : minMaxNorm(X)
-    } else {
-      // Partial normalisation: only apply to selected indices
-      const full = normalizeMethod === 'zscore' ? zscoreNorm(X) : minMaxNorm(X)
-      X = X.map((row, ri) =>
-        row.map((v, ci) => (colsToNorm.includes(ci) ? full[ri][ci] : v)),
-      )
+  // FillNaN (replace NaN / Infinity)
+  if (doFillNaN) {
+    const fillVals = featureNames.map((_, j) => {
+      if (fillNaNStrategy === 'median') return colMedian(X, j)
+      if (fillNaNStrategy === 'constant') return fillNaNConstant
+      return colMean(X, j) // mean (default)
+    })
+    X = X.map((row) =>
+      row.map((v, j) => (!isFinite(v) || isNaN(v) ? fillVals[j] : v))
+    )
+  }
+
+  // Log transform (log1p)
+  if (doLogTransform) {
+    const idxs = logTransformColumns.length > 0
+      ? logTransformColumns.map((c) => featureNames.indexOf(c)).filter((i) => i >= 0)
+      : featureNames.map((_, i) => i)
+    X = X.map((row) => row.map((v, j) => idxs.includes(j) ? Math.log1p(Math.max(0, v)) : v))
+  }
+
+  // Clip outliers
+  if (doClipOutliers) {
+    const stats = featureNames.map((_, j) => {
+      const m = colMean(X, j)
+      const s = colStd(X, j, m)
+      return { lo: m - clipStdFactor * s, hi: m + clipStdFactor * s }
+    })
+    X = X.map((row) => row.map((v, j) => Math.max(stats[j].lo, Math.min(stats[j].hi, v))))
+  }
+
+  // Bin column
+  if (doBinColumn && binColumn) {
+    const ci = featureNames.indexOf(binColumn)
+    if (ci >= 0) {
+      const vals = X.map((r) => r[ci])
+      const mn = Math.min(...vals), mx = Math.max(...vals)
+      if (binStrategy === 'quantile') {
+        const sorted = [...vals].sort((a, b) => a - b)
+        const q = featureNames.map((_, i) => sorted[Math.floor(i / featureNames.length * sorted.length)] ?? mn)
+        X = X.map((row) => {
+          const bin = q.findIndex((b) => row[ci] <= b)
+          return row.map((v, j) => j === ci ? (bin < 0 ? binCount - 1 : bin) : v)
+        })
+      } else {
+        const step = (mx - mn) / binCount || 1
+        X = X.map((row) => row.map((v, j) => j === ci ? Math.min(binCount - 1, Math.floor((v - mn) / step)) : v))
+      }
     }
   }
 
+  // Normalise feature matrix (min-max)
+  if (normalize) {
+    const colsToNorm = normalizeColumns.length > 0
+      ? normalizeColumns.map((c) => featureNames.indexOf(c)).filter((i) => i >= 0)
+      : null
+    if (colsToNorm === null) {
+      X = normalizeMethod === 'zscore' ? zscoreNorm(X) : minMaxNorm(X)
+    } else {
+      const full = normalizeMethod === 'zscore' ? zscoreNorm(X) : minMaxNorm(X)
+      X = X.map((row, ri) => row.map((v, ci) => (colsToNorm.includes(ci) ? full[ri][ci] : v)))
+    }
+  }
+
+  // Standard scaler (z-score per column)
+  if (doStandardScaler) {
+    const idxs = standardScalerColumns.length > 0
+      ? standardScalerColumns.map((c) => featureNames.indexOf(c)).filter((i) => i >= 0)
+      : featureNames.map((_, i) => i)
+    const stats = idxs.map((j) => { const m = colMean(X, j); return { m, s: colStd(X, j, m) } })
+    X = X.map((row) => row.map((v, j) => {
+      const pos = idxs.indexOf(j)
+      return pos >= 0 ? (v - stats[pos].m) / stats[pos].s : v
+    }))
+  }
+
+  // Select K best features by variance
+  if (doSelectKBest && selectK < featureNames.length) {
+    const variances = featureNames.map((_, j) => {
+      const m = colMean(X, j)
+      return X.reduce((s, r) => s + (r[j] - m) ** 2, 0) / X.length
+    })
+    const ranked = variances.map((v, i) => ({ i, v })).sort((a, b) => b.v - a.v).slice(0, selectK)
+    const keep = new Set(ranked.map((r) => r.i))
+    featureNames = featureNames.filter((_, i) => keep.has(i))
+    X = X.map((row) => row.filter((_, i) => keep.has(i)))
+  }
+
+  // Balance classes (oversample minority)
+  if (doBalance) {
+    const classCounts = new Map<number, number[]>()
+    y.forEach((cls, i) => { if (!classCounts.has(cls)) classCounts.set(cls, []); classCounts.get(cls)!.push(i) })
+    const maxCount = Math.max(...[...classCounts.values()].map((v) => v.length))
+    const newX: number[][] = [...X]
+    const newY: number[] = [...y]
+    for (const [cls, idxs] of classCounts) {
+      const need = maxCount - idxs.length
+      for (let i = 0; i < need; i++) {
+        const src = idxs[i % idxs.length]
+        newX.push(X[src])
+        newY.push(cls)
+      }
+    }
+    X = newX
+    // y is already the labels array — overwrite for balance
+    y.length = 0
+    for (const v of newY) y.push(v)
+  }
+
   // Split
-  const splitIdx = Math.floor(rows.length * trainRatio)
+  const splitIdx = Math.floor(X.length * trainRatio)
   const X_train = X.slice(0, splitIdx)
   const y_train = y.slice(0, splitIdx)
   const X_val = X.slice(splitIdx)

@@ -145,15 +145,151 @@ export function FilterNode({ data, selected }: NodeProps<FilterData>) {
   )
 }
 
+// ── FillNaN node ──────────────────────────────────────────────────────────────
+
+type FillNaNData = Node<{ label: string; strategy: string; constant: number }, 'fillNaNNode'>
+
+export function FillNaNNode({ data, selected }: NodeProps<FillNaNData>) {
+  return (
+    <DSNode label="Fill NaN" color={C.transform} selected={selected}>
+      <Row label="Strategy" value={data.strategy || 'mean'} />
+      {(data.strategy || 'mean') === 'constant' && <Row label="Value" value={data.constant ?? 0} />}
+    </DSNode>
+  )
+}
+
+// ── DropColumns node ──────────────────────────────────────────────────────────
+
+type DropColumnsData = Node<{ label: string; columns: string }, 'dropColumnsNode'>
+
+export function DropColumnsNode({ data, selected }: NodeProps<DropColumnsData>) {
+  const cols = data.columns || '—'
+  return (
+    <DSNode label="Drop Columns" color={C.transform} selected={selected}>
+      <Row label="Columns" value={cols.length > 24 ? cols.slice(0, 24) + '…' : cols} />
+    </DSNode>
+  )
+}
+
+// ── ClipOutliers node ─────────────────────────────────────────────────────────
+
+type ClipData = Node<{ label: string; stdFactor: number }, 'clipOutliersNode'>
+
+export function ClipOutliersNode({ data, selected }: NodeProps<ClipData>) {
+  return (
+    <DSNode label="Clip Outliers" color={C.transform} selected={selected}>
+      <Row label="Threshold" value={`±${data.stdFactor ?? 3}σ`} />
+    </DSNode>
+  )
+}
+
+// ── StandardScaler node ───────────────────────────────────────────────────────
+
+type StdScalerData = Node<{ label: string; columns: string }, 'standardScalerNode'>
+
+export function StandardScalerNode({ data, selected }: NodeProps<StdScalerData>) {
+  return (
+    <DSNode label="Standard Scaler" color={C.transform} selected={selected}>
+      <Row label="Columns" value={data.columns || 'all numeric'} />
+    </DSNode>
+  )
+}
+
+// ── LogTransform node ─────────────────────────────────────────────────────────
+
+type LogTransformData = Node<{ label: string; columns: string }, 'logTransformNode'>
+
+export function LogTransformNode({ data, selected }: NodeProps<LogTransformData>) {
+  return (
+    <DSNode label="Log Transform" color={C.transform} selected={selected}>
+      <Row label="Columns" value={data.columns || 'all numeric'} />
+      <Row label="Func" value="log1p(x)" />
+    </DSNode>
+  )
+}
+
+// ── BinColumn node ────────────────────────────────────────────────────────────
+
+type BinColumnData = Node<{ label: string; column: string; bins: number; strategy: string }, 'binColumnNode'>
+
+export function BinColumnNode({ data, selected }: NodeProps<BinColumnData>) {
+  return (
+    <DSNode label="Bin Column" color={C.transform} selected={selected}>
+      <Row label="Column" value={data.column || '—'} />
+      <Row label="Bins" value={data.bins ?? 5} />
+      <Row label="Strategy" value={data.strategy || 'equal-width'} />
+    </DSNode>
+  )
+}
+
+// ── SelectKBest node ──────────────────────────────────────────────────────────
+
+type SelectKBestData = Node<{ label: string; k: number }, 'selectKBestNode'>
+
+export function SelectKBestNode({ data, selected }: NodeProps<SelectKBestData>) {
+  return (
+    <DSNode label="Select K Best" color={C.transform} selected={selected}>
+      <Row label="Top K" value={data.k ?? 10} />
+      <Row label="Score" value="variance" />
+    </DSNode>
+  )
+}
+
+// ── OrdinalEncode node ────────────────────────────────────────────────────────
+
+type OrdinalEncodeData = Node<{ label: string; columns: string }, 'ordinalEncodeNode'>
+
+export function OrdinalEncodeNode({ data, selected }: NodeProps<OrdinalEncodeData>) {
+  return (
+    <DSNode label="Ordinal Encode" color={C.transform} selected={selected}>
+      <Row label="Columns" value={data.columns || 'all categorical'} />
+    </DSNode>
+  )
+}
+
+// ── BalanceClasses node ───────────────────────────────────────────────────────
+
+type BalanceData = Node<{ label: string }, 'balanceClassesNode'>
+
+export function BalanceClassesNode({ selected }: NodeProps<BalanceData>) {
+  return (
+    <DSNode label="Balance Classes" color={C.transform} selected={selected}>
+      <Row label="Method" value="oversample" />
+    </DSNode>
+  )
+}
+
+// ── DropDuplicates node ───────────────────────────────────────────────────────
+
+type DropDupData = Node<{ label: string }, 'dropDuplicatesNode'>
+
+export function DropDuplicatesNode({ selected }: NodeProps<DropDupData>) {
+  return (
+    <DSNode label="Drop Duplicates" color={C.transform} selected={selected}>
+      <Row label="Keep" value="first" />
+    </DSNode>
+  )
+}
+
 // ── Node type registry for XYFlow ─────────────────────────────────────────────
 
 export const datasetNodeTypes = {
-  datasetSource: DatasetSourceNode,
-  normalizeNode: NormalizeNode,
-  oneHotEncodeNode: OneHotEncodeNode,
-  shuffleNode: ShuffleNode,
-  splitNode: SplitNode,
-  filterNode: FilterNode,
+  datasetSource:      DatasetSourceNode,
+  normalizeNode:      NormalizeNode,
+  oneHotEncodeNode:   OneHotEncodeNode,
+  shuffleNode:        ShuffleNode,
+  splitNode:          SplitNode,
+  filterNode:         FilterNode,
+  fillNaNNode:        FillNaNNode,
+  dropColumnsNode:    DropColumnsNode,
+  clipOutliersNode:   ClipOutliersNode,
+  standardScalerNode: StandardScalerNode,
+  logTransformNode:   LogTransformNode,
+  binColumnNode:      BinColumnNode,
+  selectKBestNode:    SelectKBestNode,
+  ordinalEncodeNode:  OrdinalEncodeNode,
+  balanceClassesNode: BalanceClassesNode,
+  dropDuplicatesNode: DropDuplicatesNode,
 }
 
 // ── Palette definition (used by the pipeline toolbar) ────────────────────────
@@ -167,19 +303,93 @@ export interface DatasetNodeDef {
 }
 
 export const datasetNodeDefs: DatasetNodeDef[] = [
+  // ── Missing data ─────────────────────────────────────────────────────────
+  {
+    type: 'fillNaNNode',
+    label: 'Fill NaN',
+    description: 'Impute missing values',
+    color: '#f59e0b',
+    defaultData: { label: 'Fill NaN', strategy: 'mean', constant: 0 },
+  },
+  {
+    type: 'dropDuplicatesNode',
+    label: 'Drop Duplicates',
+    description: 'Remove identical rows',
+    color: '#f59e0b',
+    defaultData: { label: 'Drop Duplicates' },
+  },
+  // ── Feature transforms ───────────────────────────────────────────────────
   {
     type: 'normalizeNode',
     label: 'Normalize',
-    description: 'Scale numeric columns',
+    description: 'Min-max scale to [0, 1]',
     color: '#6366f1',
     defaultData: { label: 'Normalize', method: 'min-max', columns: '' },
   },
+  {
+    type: 'standardScalerNode',
+    label: 'Standard Scaler',
+    description: 'Z-score (mean=0, std=1)',
+    color: '#6366f1',
+    defaultData: { label: 'Standard Scaler', columns: '' },
+  },
+  {
+    type: 'logTransformNode',
+    label: 'Log Transform',
+    description: 'Apply log1p to numeric cols',
+    color: '#6366f1',
+    defaultData: { label: 'Log Transform', columns: '' },
+  },
+  {
+    type: 'clipOutliersNode',
+    label: 'Clip Outliers',
+    description: 'Clamp beyond N std devs',
+    color: '#6366f1',
+    defaultData: { label: 'Clip Outliers', stdFactor: 3 },
+  },
+  {
+    type: 'binColumnNode',
+    label: 'Bin Column',
+    description: 'Discretise continuous column',
+    color: '#6366f1',
+    defaultData: { label: 'Bin Column', column: '', bins: 5, strategy: 'equal-width' },
+  },
+  // ── Encoding ─────────────────────────────────────────────────────────────
   {
     type: 'oneHotEncodeNode',
     label: 'One-Hot Encode',
     description: 'Encode categorical columns',
     color: '#6366f1',
     defaultData: { label: 'One-Hot Encode', columns: '' },
+  },
+  {
+    type: 'ordinalEncodeNode',
+    label: 'Ordinal Encode',
+    description: 'Map categories → integers',
+    color: '#6366f1',
+    defaultData: { label: 'Ordinal Encode', columns: '' },
+  },
+  // ── Selection / sampling ─────────────────────────────────────────────────
+  {
+    type: 'dropColumnsNode',
+    label: 'Drop Columns',
+    description: 'Remove named columns',
+    color: '#6366f1',
+    defaultData: { label: 'Drop Columns', columns: '' },
+  },
+  {
+    type: 'selectKBestNode',
+    label: 'Select K Best',
+    description: 'Keep top K by variance',
+    color: '#6366f1',
+    defaultData: { label: 'Select K Best', k: 10 },
+  },
+  {
+    type: 'balanceClassesNode',
+    label: 'Balance Classes',
+    description: 'Oversample minority class',
+    color: '#6366f1',
+    defaultData: { label: 'Balance Classes' },
   },
   {
     type: 'shuffleNode',
@@ -189,17 +399,18 @@ export const datasetNodeDefs: DatasetNodeDef[] = [
     defaultData: { label: 'Shuffle', seed: 42 },
   },
   {
-    type: 'splitNode',
-    label: 'Split',
-    description: 'Train / val / test split',
-    color: '#10b981',
-    defaultData: { label: 'Split', trainRatio: 0.7, valRatio: 0.15, testRatio: 0.15 },
-  },
-  {
     type: 'filterNode',
     label: 'Filter',
     description: 'Filter rows by condition',
     color: '#6366f1',
     defaultData: { label: 'Filter', column: '', operator: '>', value: '0' },
+  },
+  // ── Output ───────────────────────────────────────────────────────────────
+  {
+    type: 'splitNode',
+    label: 'Split',
+    description: 'Train / val / test split',
+    color: '#10b981',
+    defaultData: { label: 'Split', trainRatio: 0.7, valRatio: 0.15, testRatio: 0.15 },
   },
 ]

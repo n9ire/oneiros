@@ -145,6 +145,10 @@ export interface GraphValidationOptions {
   customFeatureCount?: number | null
   /** If provided, used to validate Output node class count against dataset */
   customClassCount?: number | null
+  /** CV: [C, H, W] shape of images in the dataset */
+  cvInputShape?: [number, number, number] | null
+  /** CV: number of classes in the image dataset */
+  cvClassCount?: number | null
 }
 
 export function validateGraph(
@@ -339,16 +343,63 @@ export function validateGraph(
             hint: `Set channels=${opts.customFeatureCount}, height=1, width=1 on the Input node to match your data.` })
         }
       }
+
+      if (opts.cvInputShape != null) {
+        const [expC, expH, expW] = opts.cvInputShape
+        if (ch !== expC) {
+          issues.push({ nodeId: nid, severity: 'error', category: 'dataset',
+            message: `Input node has ${ch} channel(s) but your image dataset uses ${expC} channel(s).`,
+            hint: `Set channels=${expC} on the Input node to match your image dataset.` })
+        }
+        if (h !== expH || w !== expW) {
+          issues.push({ nodeId: nid, severity: 'warning', category: 'dataset',
+            message: `Input node is ${h}×${w} but images were detected as ${expH}×${expW}.`,
+            hint: `Add a Resize augmentation node (${expW}×${expH}) or update Input H/W to match.` })
+        }
+      }
+    }
+
+    // ── BackboneNode checks ───────────────────────────────────────────────
+
+    if (type === 'backboneNode') {
+      const parentIds = parents.get(nid) ?? []
+      const parentNode = nodes.find(n => parentIds.includes(n.id))
+      const inputChannels = parentNode?.data?.channels as number | undefined
+
+      if (inputChannels != null && inputChannels !== 3) {
+        issues.push({ nodeId: nid, severity: 'error', category: 'config',
+          message: `Pretrained backbone expects 3-channel (RGB) input but Input node has ${inputChannels} channels.`,
+          hint: 'Set channels=3 on the Input node. Most pretrained models are trained on RGB images.' })
+      }
+      const h = parentNode?.data?.height as number | undefined
+      const w = parentNode?.data?.width  as number | undefined
+      if (h != null && w != null && (h < 32 || w < 32)) {
+        issues.push({ nodeId: nid, severity: 'error', category: 'config',
+          message: `Pretrained backbone requires at least 32×32 input, but Input is ${h}×${w}.`,
+          hint: 'Add a Resize augmentation node to at least 32×32, and update Input H/W accordingly.' })
+      }
+      const isFrozen    = data.freeze as boolean | undefined
+      const isPretrained = data.pretrained as boolean | undefined
+      if (isFrozen && !isPretrained) {
+        issues.push({ nodeId: nid, severity: 'warning', category: 'config',
+          message: 'Backbone is frozen but not using pretrained weights — training will not update any parameters.',
+          hint: 'Either enable pretrained weights, or disable freeze so random weights can train.' })
+      }
     }
 
     // ── Output node ↔ dataset checks ──────────────────────────────────────
 
-    if (type === 'outputNode' && opts.customClassCount != null) {
+    if (type === 'outputNode') {
       const classes = Number(data.classes ?? 10)
-      if (classes !== opts.customClassCount) {
+      if (opts.customClassCount != null && classes !== opts.customClassCount) {
         issues.push({ nodeId: nid, severity: 'warning', category: 'dataset',
           message: `Output node has ${classes} classes but your dataset has ${opts.customClassCount} unique target values.`,
           hint: `Set "classes" on the Output node to ${opts.customClassCount}.` })
+      }
+      if (opts.cvClassCount != null && classes !== opts.cvClassCount) {
+        issues.push({ nodeId: nid, severity: 'warning', category: 'dataset',
+          message: `Output node has ${classes} classes but your image dataset has ${opts.cvClassCount} classes.`,
+          hint: `Set "classes" on the Output node to ${opts.cvClassCount} to match your image folders.` })
       }
     }
   }

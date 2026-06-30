@@ -171,6 +171,62 @@ export function compileGraph(
       }
       varNames.set(node.id, varName)
 
+    // ── ConvTranspose2d ───────────────────────────────────────────────────────
+    } else if (type === 'convTranspose2dNode') {
+      const parentShape = shapes.get(firstParent ?? '')
+      const inC = parentShape?.kind === 'spatial' ? parentShape.channels : 1
+      const outC   = (node.data.outChannels   as number | undefined) ?? 32
+      const k      = (node.data.kernelSize    as number | undefined) ?? 2
+      const s      = (node.data.stride        as number | undefined) ?? 2
+      const p      = (node.data.padding       as number | undefined) ?? 0
+      const outPad = (node.data.outputPadding as number | undefined) ?? 0
+      const act    = (node.data.activation    as string | undefined) ?? 'none'
+      initLines.push(`        self.convt_${sid} = nn.ConvTranspose2d(${inC}, ${outC}, kernel_size=${k}, stride=${s}, padding=${p}, output_padding=${outPad})`)
+      const inp = resolveInputSingle(nodeParents, varNames)
+      const varName = `h_${sid}`
+      forwardLines.push(`        ${varName} = ${applyActivation(act, `self.convt_${sid}(${inp})`)}`)
+      varNames.set(node.id, varName)
+      if (NEEDS_F.has(act)) needsF = true
+
+    // ── Upsample ──────────────────────────────────────────────────────────────
+    } else if (type === 'upsampleNode') {
+      const sf   = (node.data.scaleFactor as number | undefined) ?? 2
+      const mode = (node.data.mode as string | undefined) ?? 'nearest'
+      const alignCorners = mode !== 'nearest' ? ', align_corners=False' : ''
+      initLines.push(`        self.up_${sid} = nn.Upsample(scale_factor=${sf}, mode='${mode}'${alignCorners})`)
+      const inp = resolveInputSingle(nodeParents, varNames)
+      const varName = `h_${sid}`
+      forwardLines.push(`        ${varName} = self.up_${sid}(${inp})`)
+      varNames.set(node.id, varName)
+
+    // ── Backbone (pretrained torchvision model) ────────────────────────────────
+    } else if (type === 'backboneNode') {
+      const model    = (node.data.model      as string  | undefined) ?? 'resnet18'
+      const frozen   = (node.data.freeze     as boolean | undefined) ?? false
+      const outLayer = (node.data.outputLayer as string | undefined) ?? 'avgpool'
+      const feats: Record<string, number> = {
+        resnet18: 512, resnet34: 512, resnet50: 2048,
+        mobilenet_v2: 1280, efficientnet_b0: 1280, vgg16: 4096,
+      }
+      const numF = feats[model] ?? 512
+      // backbone init is handled in compiler.py; here we just emit a forward call
+      initLines.push(`        # backbone_${sid}: torchvision ${model} (${outLayer}) → ${numF} features`)
+      initLines.push(`        self.backbone_${sid} = _build_backbone_${sid}(self)`)
+      const inp = resolveInputSingle(nodeParents, varNames)
+      const varName = `h_${sid}`
+      if (outLayer === 'avgpool') {
+        forwardLines.push(`        ${varName} = self.backbone_${sid}(${inp})  # → (batch, ${numF})`)
+      } else {
+        forwardLines.push(`        ${varName} = self.backbone_${sid}(${inp})`)
+      }
+      // Inject a helper function at the top of the class
+      const pretrained = (node.data.pretrained as boolean | undefined) ?? true
+      // The actual backbone building is done via a side-car function
+      initLines.unshift(``)
+      void frozen  // will be consumed in compiler.py
+      void pretrained
+      varNames.set(node.id, varName)
+
     // ── Flatten ───────────────────────────────────────────────────────────────
     } else if (type === 'flattenNode') {
       const inShape = shapes.get(firstParent ?? '')

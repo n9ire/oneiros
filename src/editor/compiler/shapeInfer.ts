@@ -92,6 +92,36 @@ export function inferShapes(
       const features = firstParentShape ? flatFeatures(firstParentShape) : 0
       shapes.set(node.id, { kind: 'flat', features })
 
+    // ── ConvTranspose2d (upsampling via transposed convolution) ───────────────
+    } else if (type === 'convTranspose2dNode') {
+      const inH = firstParentShape?.kind === 'spatial' ? firstParentShape.height : 1
+      const inW = firstParentShape?.kind === 'spatial' ? firstParentShape.width : 1
+      const outC   = (data.outChannels   as number | undefined) ?? 32
+      const k      = (data.kernelSize    as number | undefined) ?? 2
+      const s      = (data.stride        as number | undefined) ?? 2
+      const p      = (data.padding       as number | undefined) ?? 0
+      const outPad = (data.outputPadding as number | undefined) ?? 0
+      const outH = (inH - 1) * s - 2 * p + k + outPad
+      const outW = (inW - 1) * s - 2 * p + k + outPad
+      shapes.set(node.id, { kind: 'spatial', channels: outC, height: outH, width: outW })
+
+    // ── Upsample (scale spatial dims) ─────────────────────────────────────────
+    } else if (type === 'upsampleNode') {
+      const inC = firstParentShape?.kind === 'spatial' ? firstParentShape.channels : 1
+      const inH = firstParentShape?.kind === 'spatial' ? firstParentShape.height : 1
+      const inW = firstParentShape?.kind === 'spatial' ? firstParentShape.width : 1
+      const sf = (data.scaleFactor as number | undefined) ?? 2
+      shapes.set(node.id, { kind: 'spatial', channels: inC, height: Math.floor(inH * sf), width: Math.floor(inW * sf) })
+
+    // ── Backbone (pretrained vision model → flat feature vector) ──────────────
+    } else if (type === 'backboneNode') {
+      const feats: Record<string, number> = {
+        resnet18: 512, resnet34: 512, resnet50: 2048,
+        mobilenet_v2: 1280, efficientnet_b0: 1280, vgg16: 4096,
+      }
+      const model = (data.model as string | undefined) ?? 'resnet18'
+      shapes.set(node.id, { kind: 'flat', features: feats[model] ?? 512 })
+
     // ── Dropout / BatchNorm / Activation (passthrough) ─────────────────────────
     } else if (type === 'dropoutNode' || type === 'batchNormNode' || type === 'activationNode') {
       if (firstParentShape) shapes.set(node.id, { ...firstParentShape })

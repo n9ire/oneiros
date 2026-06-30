@@ -116,21 +116,47 @@ def _validate(
     loader: DataLoader,
     criterion: nn.Module,
     device: torch.device,
-) -> tuple[float, float]:
+    collect_preds: bool = False,
+) -> tuple[float, float, float | None, list[int] | None, list[int] | None]:
+    """Returns (val_loss, val_acc, top5_acc_or_None, all_preds, all_targets)."""
     model.eval()
     total_loss = 0.0
     correct = 0
+    correct_top5 = 0
     total = 0
+    all_preds: list[int] = []
+    all_targets: list[int] = []
 
     for data, target in loader:
         data, target = data.to(device), target.to(device)
         output = model(data)
         total_loss += criterion(output, target).item()
+
+        num_classes = output.size(1) if output.dim() > 1 else 1
         pred = output.argmax(dim=1)
         correct += pred.eq(target).sum().item()
         total += target.size(0)
 
-    return total_loss / len(loader), correct / total
+        if collect_preds:
+            all_preds.extend(pred.cpu().tolist())
+            all_targets.extend(target.cpu().tolist())
+
+        # Top-5 only makes sense when we have ≥5 classes
+        if num_classes >= 5:
+            top5 = output.topk(5, dim=1).indices
+            correct_top5 += sum(t.item() in r.tolist() for t, r in zip(target, top5))
+
+    val_loss = total_loss / len(loader)
+    val_acc = correct / total if total else 0.0
+    top5_acc = (correct_top5 / total) if (total > 0 and output.size(1) >= 5) else None
+
+    return (
+        val_loss,
+        val_acc,
+        top5_acc,
+        all_preds if collect_preds else None,
+        all_targets if collect_preds else None,
+    )
 
 
 # ── Scheduler factory ─────────────────────────────────────────────────────────
@@ -219,7 +245,11 @@ def run_training_sync(
             send(_msg("stopped", epoch=epoch, totalEpochs=epochs))
             return
 
-        val_loss, val_acc = _validate(model, val_loader, criterion, device)
+        is_last = epoch == epochs
+        val_loss, val_acc, top5_acc, _, _ = _validate(
+            model, val_loader, criterion, device,
+            collect_preds=is_last,
+        )
 
         # Step the scheduler
         if scheduler is not None:
@@ -235,8 +265,7 @@ def run_training_sync(
         avg_time = sum(epoch_times) / len(epoch_times)
         eta_secs = int(avg_time * (epochs - epoch))
 
-        send(_msg(
-            "epochEnd",
+        epoch_msg: dict = dict(
             epoch=epoch,
             totalEpochs=epochs,
             trainLoss=round(train_loss, 5),
@@ -245,9 +274,31 @@ def run_training_sync(
             epochTime=round(elapsed, 2),
             etaSecs=eta_secs,
             currentLR=current_lr,
-        ))
+        )
+        if top5_acc is not None:
+            epoch_msg["top5Accuracy"] = round(top5_acc, 5)
 
-    send(_msg("complete", totalEpochs=epochs))
+        send(_msg("epochEnd", **epoch_msg))
+
+    # Final pass to collect confusion matrix
+    _, _, _, final_preds, final_targets = _validate(
+        model, val_loader, criterion, device, collect_preds=True
+    )
+    confusion_matrix: list[list[int]] | None = None
+    if final_preds is not None and final_targets is not None:
+        try:
+            from sklearn.metrics import confusion_matrix as sk_cm  # type: ignore[import]
+            labels = sorted(set(final_targets))
+            cm = sk_cm(final_targets, final_preds, labels=labels)
+            confusion_matrix = cm.tolist()
+        except Exception:
+            pass
+
+    complete_msg: dict = {"totalEpochs": epochs}
+    if confusion_matrix is not None:
+        complete_msg["confusionMatrix"] = confusion_matrix
+
+    send(_msg("complete", **complete_msg))
 
 
 # ── Async wrapper ─────────────────────────────────────────────────────────────

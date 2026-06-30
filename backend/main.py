@@ -16,7 +16,7 @@ import uuid
 from typing import Any
 
 import torch
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -27,6 +27,19 @@ from trainer import run_training_async
 from ai import chat as ai_chat
 from plotter import generate_plot, CHART_DEFS, PALETTES
 from xgboost_trainer import train_xgboost, REGRESSION_OBJECTIVES
+from edf_processor import (
+    load_edf,
+    apply_edf_pipeline,
+    generate_edf_plot,
+    EDF_STEP_META,
+)
+from cv_dataset import (
+    load_image_folder,
+    make_image_loaders,
+    preview_augmentation,
+    extract_zip_to_temp,
+    AUG_STEP_META,
+)
 
 # ── App setup ──────────────────────────────────────────────────────────────────
 
@@ -78,6 +91,7 @@ class TrainRequest(BaseModel):
     graph: dict
     config: TrainConfig
     customDataset: dict | None = None
+    cvDataset: dict | None = None  # {sessionId, augmentSteps}
 
 
 class AIChatRequest(BaseModel):
@@ -354,6 +368,16 @@ async def training_websocket(websocket: WebSocket, run_id: str) -> None:
                 req.customDataset,
                 batch_size=req.config.batchSize,
             )
+        elif req.config.dataset == "image_folder":
+            if not req.cvDataset or not req.cvDataset.get("sessionId"):
+                await websocket.send_json({"type": "error", "message": "Image dataset session missing. Upload a zip first."})
+                await websocket.close()
+                return
+            train_loader, val_loader = make_image_loaders(
+                session_id=req.cvDataset["sessionId"],
+                augment_steps=req.cvDataset.get("augmentSteps", []),
+                batch_size=req.config.batchSize,
+            )
         else:
             train_loader, val_loader = get_loaders(
                 req.config.dataset,
@@ -382,7 +406,14 @@ async def training_websocket(websocket: WebSocket, run_id: str) -> None:
         msg = str(shape_exc)
         hint = ""
         if "cannot be multiplied" in msg or "size mismatch" in msg.lower():
-            hint = " — Check that your Input node dimensions match your dataset (for a CSV with N features set channels=N, height=1, width=1)."
+            if req.config.dataset == "image_folder":
+                hint = " — Check that your Input node C/H/W match your image dataset shape, or add a Resize augmentation node."
+            else:
+                hint = " — Check that your Input node dimensions match your dataset (for a CSV with N features set channels=N, height=1, width=1)."
+        elif "output size is too small" in msg.lower() or "calculated padded input size" in msg.lower():
+            hint = " — A convolutional kernel is larger than the feature map. Add padding, reduce kernel size, or add fewer pooling layers."
+        elif "expected input" in msg.lower() and "channel" in msg.lower():
+            hint = " — Channel count mismatch. For pretrained backbones, set Input node channels=3 (RGB)."
         await websocket.send_json({"type": "error", "message": f"Shape mismatch: {msg}{hint}"})
         await websocket.close()
         active_runs.pop(run_id, None)
@@ -445,6 +476,178 @@ async def training_websocket(websocket: WebSocket, run_id: str) -> None:
             await websocket.close()
         except Exception:
             pass
+
+
+# ── EDF / MNE endpoints ───────────────────────────────────────────────────────
+
+@app.get("/api/edf/meta")
+async def edf_meta() -> dict:
+    """Return supported EDF pipeline step types and their parameter schemas."""
+    return {"steps": EDF_STEP_META}
+
+
+@app.post("/api/edf/load")
+async def edf_load(file: UploadFile = File(...)) -> dict:
+    """Accept an EDF file upload, parse with MNE, return metadata + preview."""
+    from fastapi.responses import JSONResponse
+    if not file.filename or not file.filename.lower().endswith(".edf"):
+        return JSONResponse({"error": "Only .edf files are supported."}, status_code=400)
+
+    # Write to a temp file (MNE requires a real path)
+    suffix = ".edf"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    try:
+        result = load_edf(tmp_path)
+        # Rename the session's stored name to the original filename
+        result["name"] = Path(file.filename).stem
+        return result
+    except RuntimeError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=503)
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"error": f"Failed to load EDF: {exc}"}, status_code=500)
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+
+
+@app.post("/api/edf/process")
+async def edf_process(request: Request) -> dict:
+    """Apply an EDF pipeline to a loaded session and return epoch data."""
+    from fastapi.responses import JSONResponse
+    try:
+        body = await request.json()
+    except Exception as exc:
+        return JSONResponse({"error": f"Invalid JSON: {exc}"}, status_code=400)
+
+    session_id = body.get("sessionId", "")
+    steps       = body.get("steps", [])
+
+    if not session_id:
+        return JSONResponse({"error": "sessionId is required."}, status_code=422)
+
+    try:
+        result = apply_edf_pipeline(session_id, steps)
+        return result
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+    except RuntimeError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=503)
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"error": f"Pipeline failed: {exc}"}, status_code=500)
+
+
+@app.post("/api/edf/plot")
+async def edf_plot(request: Request) -> StreamingResponse:
+    """Generate a waveform or PSD PNG for an EDF session."""
+    from fastapi.responses import JSONResponse
+    try:
+        body = await request.json()
+    except Exception as exc:
+        return JSONResponse({"error": f"Invalid JSON: {exc}"}, status_code=400)
+
+    session_id = body.get("sessionId", "")
+    config      = body.get("config", {})
+
+    if not session_id:
+        return JSONResponse({"error": "sessionId is required."}, status_code=422)
+
+    try:
+        png_bytes = generate_edf_plot(session_id, config)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+    except RuntimeError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=503)
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"error": f"Plot failed: {exc}"}, status_code=500)
+
+    return StreamingResponse(
+        io.BytesIO(png_bytes),
+        media_type="image/png",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+# ── Computer Vision endpoints ─────────────────────────────────────────────────
+
+@app.get("/api/cv/meta")
+async def cv_meta() -> dict:
+    """Return available augmentation step types and their parameter schemas."""
+    return {"steps": AUG_STEP_META}
+
+
+@app.post("/api/cv/load")
+async def cv_load(file: UploadFile = File(...)) -> dict:
+    """Accept a zip of image class folders, extract and parse, return metadata."""
+    from fastapi.responses import JSONResponse
+    if not file.filename or not file.filename.lower().endswith(".zip"):
+        return JSONResponse({"error": "Only .zip files are supported. Zip your class folders: class_a/, class_b/, …"}, status_code=400)
+
+    try:
+        content = await file.read()
+    except Exception as exc:
+        return JSONResponse({"error": f"Failed to read uploaded file: {exc}"}, status_code=400)
+
+    try:
+        extracted_path = extract_zip_to_temp(content, file.filename)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except Exception as exc:
+        return JSONResponse({"error": f"Failed to extract zip: {exc}"}, status_code=500)
+
+    try:
+        result = load_image_folder(extracted_path)
+        result["name"] = Path(file.filename).stem
+        return result
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc), "hint": "Zip your class folders directly: class_a/img1.jpg, class_b/img2.png …"}, status_code=422)
+    except RuntimeError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=503)
+    except Exception as exc:
+        import traceback; traceback.print_exc()
+        return JSONResponse({"error": f"Failed to load image folder: {exc}"}, status_code=500)
+
+
+@app.post("/api/cv/augment_preview")
+async def cv_augment_preview(request: Request) -> StreamingResponse:
+    """Apply augmentation pipeline to one image, return side-by-side before/after PNG."""
+    from fastapi.responses import JSONResponse
+    try:
+        body = await request.json()
+    except Exception as exc:
+        return JSONResponse({"error": f"Invalid JSON: {exc}"}, status_code=400)
+
+    session_id  = body.get("sessionId", "")
+    steps       = body.get("steps", [])
+    image_index = int(body.get("imageIndex", 0))
+
+    if not session_id:
+        return JSONResponse({"error": "sessionId is required."}, status_code=422)
+
+    try:
+        png_bytes = preview_augmentation(session_id, steps, image_index)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=422)
+    except Exception as exc:
+        import traceback; traceback.print_exc()
+        return JSONResponse({"error": f"Preview failed: {exc}"}, status_code=500)
+
+    return StreamingResponse(
+        io.BytesIO(png_bytes),
+        media_type="image/png",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 # ── Dev entry point ───────────────────────────────────────────────────────────

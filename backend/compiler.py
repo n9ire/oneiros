@@ -139,6 +139,31 @@ def infer_shapes(sorted_nodes: list[dict], edges: list[dict]) -> dict[str, NodeS
             features = flat_features(first_parent_shape) if first_parent_shape else 0
             shapes[nid] = FlatShape(features=features)
 
+        elif ntype == "convTranspose2dNode":
+            in_h = first_parent_shape.height if isinstance(first_parent_shape, SpatialShape) else 1
+            in_w = first_parent_shape.width if isinstance(first_parent_shape, SpatialShape) else 1
+            out_c = int(data.get("outChannels", 32))
+            k     = int(data.get("kernelSize", 2))
+            s     = int(data.get("stride", 2))
+            p     = int(data.get("padding", 0))
+            op    = int(data.get("outputPadding", 0))
+            out_h = (in_h - 1) * s - 2 * p + k + op
+            out_w = (in_w - 1) * s - 2 * p + k + op
+            shapes[nid] = SpatialShape(channels=out_c, height=out_h, width=out_w)
+
+        elif ntype == "upsampleNode":
+            in_c = first_parent_shape.channels if isinstance(first_parent_shape, SpatialShape) else 1
+            in_h = first_parent_shape.height if isinstance(first_parent_shape, SpatialShape) else 1
+            in_w = first_parent_shape.width if isinstance(first_parent_shape, SpatialShape) else 1
+            sf = float(data.get("scaleFactor", 2))
+            shapes[nid] = SpatialShape(channels=in_c, height=int(in_h * sf), width=int(in_w * sf))
+
+        elif ntype == "backboneNode":
+            model_name = str(data.get("model", "resnet18"))
+            _BACKBONE_FEATS = {"resnet18": 512, "resnet34": 512, "resnet50": 2048,
+                               "mobilenet_v2": 1280, "efficientnet_b0": 1280, "vgg16": 4096}
+            shapes[nid] = FlatShape(features=_BACKBONE_FEATS.get(model_name, 512))
+
         elif ntype in ("dropoutNode", "batchNormNode", "activationNode"):
             if first_parent_shape:
                 shapes[nid] = first_parent_shape
@@ -255,6 +280,45 @@ class GraphModel(nn.Module):
                 layer = getattr(self, op.layer_attr)  # type: ignore[arg-type]
                 var[op.node_id] = self._activate(layer(inp), op.activation)
 
+            elif op.kind == "conv_transpose2d":
+                inp = self._single(var, op.input_node_ids, x)
+                layer = getattr(self, op.layer_attr)  # type: ignore[arg-type]
+                var[op.node_id] = self._activate(layer(inp), op.activation)
+
+            elif op.kind == "upsample":
+                inp = self._single(var, op.input_node_ids, x)
+                layer = getattr(self, op.layer_attr)  # type: ignore[arg-type]
+                var[op.node_id] = layer(inp)
+
+            elif op.kind == "backbone":
+                inp = self._single(var, op.input_node_ids, x)
+                backbone = getattr(self, op.layer_attr)  # type: ignore[arg-type]
+                out_layer = op.extra.get("out_layer", "avgpool")
+                if out_layer == "avgpool":
+                    # Standard feature extraction: run full backbone, flatten
+                    out = backbone(inp)
+                    if out.dim() > 2:
+                        out = out.view(out.size(0), -1)
+                else:
+                    # Tap intermediate layer (ResNet only)
+                    import torchvision.models.resnet as _rn  # type: ignore[import]
+                    if hasattr(backbone, out_layer):
+                        # Run up to that layer manually
+                        h = backbone.conv1(inp)
+                        h = backbone.bn1(h)
+                        h = backbone.relu(h)
+                        h = backbone.maxpool(h)
+                        h = backbone.layer1(h)
+                        h = backbone.layer2(h)
+                        if out_layer in ("layer3", "layer4"):
+                            h = backbone.layer3(h)
+                        if out_layer == "layer4":
+                            h = backbone.layer4(h)
+                        out = h
+                    else:
+                        out = backbone(inp)
+                var[op.node_id] = out
+
             elif op.kind == "output":
                 inp = self._gather(var, op.input_node_ids, x)
                 layer = getattr(self, op.layer_attr)  # type: ignore[arg-type]
@@ -364,6 +428,60 @@ def build_model(graph: dict) -> tuple[GraphModel, list[str]]:
 
         elif ntype == "flattenNode":
             ops.append(Op(kind="flatten", node_id=nid, input_node_ids=node_parents))
+
+        elif ntype == "convTranspose2dNode":
+            in_c = first_parent_shape.channels if isinstance(first_parent_shape, SpatialShape) else 1
+            out_c = int(data.get("outChannels", 32))
+            k     = int(data.get("kernelSize", 2))
+            s     = int(data.get("stride", 2))
+            p     = int(data.get("padding", 0))
+            out_p = int(data.get("outputPadding", 0))
+            grp   = int(data.get("groups", 1))
+            bias  = bool(data.get("bias", True))
+            attr  = f"convt_{safe_id}"
+            setattr(model, attr, nn.ConvTranspose2d(in_c, out_c, kernel_size=k, stride=s,
+                                                     padding=p, output_padding=out_p,
+                                                     groups=grp, bias=bias))
+            ops.append(Op(kind="conv_transpose2d", node_id=nid, layer_attr=attr,
+                          activation=str(data.get("activation", "none")), input_node_ids=node_parents))
+
+        elif ntype == "upsampleNode":
+            sf   = float(data.get("scaleFactor", 2))
+            mode = str(data.get("mode", "nearest"))
+            attr = f"up_{safe_id}"
+            kwargs: dict = {"scale_factor": sf, "mode": mode}
+            if mode != "nearest":
+                kwargs["align_corners"] = False
+            setattr(model, attr, nn.Upsample(**kwargs))
+            ops.append(Op(kind="upsample", node_id=nid, layer_attr=attr, input_node_ids=node_parents))
+
+        elif ntype == "backboneNode":
+            model_name  = str(data.get("model", "resnet18"))
+            pretrained  = bool(data.get("pretrained", True))
+            freeze      = bool(data.get("freeze", False))
+            out_layer   = str(data.get("outputLayer", "avgpool"))
+            attr = f"backbone_{safe_id}"
+            try:
+                import torchvision.models as tv_models  # type: ignore[import]
+                _weights = "DEFAULT" if pretrained else None
+                _backbone = getattr(tv_models, model_name)(weights=_weights)
+                # Remove final classifier / fc
+                if hasattr(_backbone, "fc"):
+                    _backbone.fc = nn.Identity()
+                elif hasattr(_backbone, "classifier"):
+                    _backbone.classifier = nn.Identity()
+                if freeze:
+                    for param in _backbone.parameters():
+                        param.requires_grad_(False)
+                setattr(model, attr, _backbone)
+            except ImportError:
+                raise RuntimeError(
+                    "torchvision is required for BackboneNode. "
+                    "Run: pip install torchvision"
+                )
+            ops.append(Op(kind="backbone", node_id=nid, layer_attr=attr,
+                          input_node_ids=node_parents,
+                          extra={"out_layer": out_layer}))
 
         elif ntype == "dropoutNode":
             attr = f"drop_{safe_id}"

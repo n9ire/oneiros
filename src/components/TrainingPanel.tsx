@@ -52,6 +52,8 @@ export default function TrainingPanel({ onClose }: TrainingPanelProps) {
   const preflightIssues = useTrainingStore((s) => s.preflightIssues)
   const csvDataset = useDatasetStore((s) => s.dataset)
   const csvTarget = useDatasetStore((s) => s.targetColumn)
+  const cvDataset = useDatasetStore((s) => s.cvDataset)
+  const confusionMatrix = useTrainingStore((s) => s.confusionMatrix)
   // Live validation issues from the graph store (updated on every graph change)
   const liveIssues = useGraphStore((s) => s.validationIssues)
 
@@ -237,6 +239,9 @@ export default function TrainingPanel({ onClose }: TrainingPanelProps) {
                       <MetricChip label="Train Loss" value={lastMetrics.trainLoss.toFixed(4)} />
                       <MetricChip label="Val Loss" value={lastMetrics.valLoss.toFixed(4)} />
                       <MetricChip label="Val Acc" value={`${(lastMetrics.valAccuracy * 100).toFixed(1)}%`} accent />
+                      {lastMetrics.top5Accuracy != null && (
+                        <MetricChip label="Top-5 Acc" value={`${(lastMetrics.top5Accuracy * 100).toFixed(1)}%`} accent />
+                      )}
                       {lastMetrics.currentLR !== undefined && config.scheduler !== 'none' && (
                         <MetricChip label="LR" value={lastMetrics.currentLR.toExponential(2)} />
                       )}
@@ -245,17 +250,25 @@ export default function TrainingPanel({ onClose }: TrainingPanelProps) {
                 </div>
               )}
               {hasMetrics ? (
-                <div style={{ flex: 1, display: 'flex', gap: 12, minHeight: 0 }}>
-                  <ChartPanel title="Loss" data={epochMetrics}
-                    lines={[
-                      { key: 'trainLoss' as keyof EpochMetrics, color: '#8b5cf6', label: 'Train' },
-                      { key: 'valLoss' as keyof EpochMetrics, color: '#6366f1', label: 'Val' },
-                    ]}
-                  />
-                  <ChartPanel title="Accuracy" data={epochMetrics}
-                    lines={[{ key: 'valAccuracy' as keyof EpochMetrics, color: '#10b981', label: 'Val' }]}
-                    percent
-                  />
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0, overflow: 'auto' }}>
+                  <div style={{ flex: 1, display: 'flex', gap: 12, minHeight: 160 }}>
+                    <ChartPanel title="Loss" data={epochMetrics}
+                      lines={[
+                        { key: 'trainLoss' as keyof EpochMetrics, color: '#8b5cf6', label: 'Train' },
+                        { key: 'valLoss' as keyof EpochMetrics, color: '#6366f1', label: 'Val' },
+                      ]}
+                    />
+                    <ChartPanel title="Accuracy" data={epochMetrics}
+                      lines={[{ key: 'valAccuracy' as keyof EpochMetrics, color: '#10b981', label: 'Val' }]}
+                      percent
+                    />
+                  </div>
+                  {status === 'complete' && confusionMatrix && confusionMatrix.length > 0 && (
+                    <ConfusionMatrixPanel
+                      matrix={confusionMatrix}
+                      classNames={cvDataset?.classNames}
+                    />
+                  )}
                 </div>
               ) : (status === 'idle' || status === 'stopped' || status === 'complete') ? (
                 <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -291,6 +304,9 @@ function ConfigForm({
   csvTarget: string | null
   customDatasetInfo: import('../types/training').CustomDatasetPayload | null
 }) {
+  const cvDataset = useDatasetStore((s) => s.cvDataset)
+  const cvDatasetRef = useTrainingStore((s) => s.cvDatasetRef)
+
   const datasetOptions = [
     { value: 'mnist', label: 'MNIST' },
     { value: 'fashion_mnist', label: 'Fashion-MNIST' },
@@ -298,9 +314,13 @@ function ConfigForm({
     ...(csvDatasetName
       ? [{ value: 'custom', label: `CSV: ${csvDatasetName}` }]
       : [{ value: 'custom', label: 'CSV (no dataset loaded)' }]),
+    ...(cvDataset
+      ? [{ value: 'image_folder', label: `Images: ${cvDataset.name}` }]
+      : []),
   ]
 
   const isCustom = config.dataset === 'custom'
+  const isImageFolder = config.dataset === 'image_folder'
   const customReady = isCustom && !!csvDatasetName && !!csvTarget
 
   return (
@@ -350,6 +370,38 @@ function ConfigForm({
           )}
         </div>
       )}
+      {/* Image folder dataset info */}
+      {isImageFolder && !disabled && (
+        <div style={{
+          marginBottom: 9, padding: '7px 9px',
+          background: cvDatasetRef ? 'rgba(6,182,212,0.06)' : 'rgba(239,68,68,0.06)',
+          border: `1px solid ${cvDatasetRef ? '#06b6d430' : '#ef444430'}`,
+          borderRadius: 6, fontSize: 10, lineHeight: 1.7,
+        }}>
+          {cvDataset && cvDatasetRef ? (
+            <>
+              <div style={{ color: '#67e8f9', fontWeight: 600, marginBottom: 2 }}>{cvDataset.name}</div>
+              <div style={{ color: '#71717a' }}>
+                Classes: <span style={{ color: '#e4e4e7' }}>{cvDataset.classNames.length}</span>
+                {' · '}Images: <span style={{ color: '#e4e4e7' }}>{cvDataset.totalImages.toLocaleString()}</span>
+              </div>
+              <div style={{ color: '#71717a' }}>
+                Shape: <span style={{ color: '#e4e4e7' }}>{cvDataset.inputShape[0]}×{cvDataset.inputShape[1]}×{cvDataset.inputShape[2]}</span>
+              </div>
+              {cvDatasetRef.augmentSteps.length === 0 && (
+                <div style={{ color: '#fcd34d', marginTop: 3 }}>
+                  ⚠ No augmentation — consider Resize + Normalize
+                </div>
+              )}
+            </>
+          ) : (
+            <span style={{ color: '#f87171' }}>
+              Export an image dataset from the Dataset tab first.
+            </span>
+          )}
+        </div>
+      )}
+
       <CfgNumber label="Epochs" value={config.epochs} onChange={(v) => onChange({ epochs: v })} min={1} disabled={disabled} />
       <CfgNumber label="Batch Size" value={config.batchSize} onChange={(v) => onChange({ batchSize: v })} min={1} disabled={disabled} />
       <CfgNumber label="Learning Rate" value={config.learningRate} onChange={(v) => onChange({ learningRate: v })} step={0.0001} disabled={disabled} />
@@ -540,11 +592,20 @@ const SEV_BG:    Record<string, string> = { error: 'rgba(239,68,68,0.07)', warni
 function parseTrainingError(raw: string): { title: string; detail: string; hint: string } {
   if (raw.includes('Shape mismatch') || raw.includes('cannot be multiplied') || raw.includes('size mismatch')) {
     const match = raw.match(/\((\d+x\d+) and (\d+x\d+)\)/)
+    const isCV = raw.includes('image dataset') || raw.includes('Backbone') || raw.includes('channel')
     return {
       title: 'Shape Mismatch',
       detail: match ? `Got tensor ${match[1]} but layer expects ${match[2]}.` : raw,
-      hint: 'Check that your Input node dimensions match your data. For a CSV with N features set channels=N, height=1, width=1.',
+      hint: isCV
+        ? 'Check your Input node C/H/W matches the image dataset shape. Add a Resize augmentation if sizes differ. Backbone requires channels=3.'
+        : 'Check that your Input node dimensions match your data. For a CSV with N features set channels=N, height=1, width=1.',
     }
+  }
+  if (raw.includes('Backbone expects') || raw.includes('backbone') || raw.includes('expected input') && raw.includes('channel')) {
+    return { title: 'Backbone Channel Error', detail: raw, hint: 'Pretrained backbones require 3-channel (RGB) input. Set channels=3 on the Input node.' }
+  }
+  if (raw.includes('kernel is larger') || raw.includes('output size is too small') || raw.includes('Convolutional kernel')) {
+    return { title: 'Kernel Too Large', detail: raw, hint: 'Your convolutional kernel is bigger than the feature map. Add padding, reduce kernel size, reduce pooling, or use a larger input size.' }
   }
   if (raw.includes('Loss became NaN')) {
     return { title: 'Loss is NaN', detail: raw, hint: 'Lower your learning rate (try 0.0001), add BatchNorm layers, or check your labels are in the correct range.' }
@@ -554,6 +615,15 @@ function parseTrainingError(raw: string): { title: string; detail: string; hint:
   }
   if (raw.includes('out of memory') || raw.includes('OutOfMemory')) {
     return { title: 'Out of Memory', detail: raw, hint: 'Reduce batch size, add Dropout/pooling, or use a smaller model.' }
+  }
+  if (raw.includes('torchvision is required') || raw.includes('torchvision is not installed')) {
+    return { title: 'Missing Dependency', detail: raw, hint: 'Run: pip install torchvision in your backend directory.' }
+  }
+  if (raw.includes('CV session') || raw.includes('session') && raw.includes('not found')) {
+    return { title: 'Session Expired', detail: raw, hint: 'Re-upload your image zip in the Dataset tab — sessions reset when the backend restarts.' }
+  }
+  if (raw.includes('Image dataset session missing')) {
+    return { title: 'No Image Dataset', detail: raw, hint: 'Go to Dataset → Images tab, export your dataset to training first.' }
   }
   if (raw.includes('Invalid or expired run')) {
     return { title: 'Connection Error', detail: raw, hint: 'Click Start Training again — the run ID expired before the WebSocket could connect.' }
@@ -857,6 +927,70 @@ function XGBResults({ result }: { result: XGBResult }) {
             </ResponsiveContainer>
           </div>
         )}
+      </div>
+    </div>
+  )
+}
+
+// ── Confusion matrix heatmap ──────────────────────────────────────────────────
+
+function ConfusionMatrixPanel({ matrix, classNames }: { matrix: number[][]; classNames?: string[] }) {
+  const n = matrix.length
+  if (n === 0) return null
+
+  const maxVal = Math.max(...matrix.flat())
+  const labels = classNames?.slice(0, n) ?? matrix.map((_, i) => String(i))
+
+  function cellColor(v: number) {
+    const t = maxVal > 0 ? v / maxVal : 0
+    const r = Math.round(99 + t * (16 - 99))
+    const g = Math.round(102 + t * (185 - 102))
+    const b = Math.round(241 + t * (129 - 241))
+    return `rgb(${r},${g},${b})`
+  }
+
+  const cellSize = Math.min(48, Math.max(20, Math.floor(280 / (n + 1))))
+  const fontSize = Math.max(8, Math.min(11, cellSize - 6))
+
+  return (
+    <div style={{ flexShrink: 0, marginTop: 8 }}>
+      <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: '#52525b', marginBottom: 6 }}>
+        Confusion Matrix (validation set)
+      </div>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ borderCollapse: 'collapse', fontSize }}>
+          <thead>
+            <tr>
+              <th style={{ padding: 2, color: '#3f3f46', fontSize: fontSize - 1 }}>P↓ T→</th>
+              {labels.map((lbl) => (
+                <th key={lbl} style={{ padding: 2, color: '#71717a', minWidth: cellSize, textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: cellSize }}>
+                  {lbl.length > 6 ? lbl.slice(0, 5) + '…' : lbl}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {matrix.map((row, ri) => (
+              <tr key={ri}>
+                <td style={{ padding: 2, color: '#71717a', fontSize: fontSize - 1, whiteSpace: 'nowrap', maxWidth: cellSize * 1.5, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {(labels[ri] ?? '').length > 6 ? (labels[ri] ?? '').slice(0, 5) + '…' : (labels[ri] ?? '')}
+                </td>
+                {row.map((v, ci) => (
+                  <td key={ci} style={{
+                    width: cellSize, height: cellSize, textAlign: 'center',
+                    background: cellColor(v),
+                    color: v / maxVal > 0.5 ? '#09090b' : '#e4e4e7',
+                    borderRadius: 2,
+                    fontWeight: ri === ci ? 700 : 400,
+                    border: ri === ci ? '1px solid rgba(16,185,129,0.5)' : '1px solid transparent',
+                  }}>
+                    {v}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   )

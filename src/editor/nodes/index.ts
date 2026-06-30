@@ -28,3 +28,8 @@ import './TransformerEncoderNode'
 
 // Standalone activation
 import './ActivationNode'
+
+// Computer Vision
+import './ConvTranspose2dNode'
+import './UpsampleNode'
+import './BackboneNode'

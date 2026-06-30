@@ -10,7 +10,7 @@ export type SchedulerType = 'none' | 'step' | 'cosine' | 'plateau' | 'exponentia
 
 export interface TrainingConfig {
   modelType: 'nn' | 'xgboost'
-  dataset: 'mnist' | 'fashion_mnist' | 'cifar10' | 'custom'
+  dataset: 'mnist' | 'fashion_mnist' | 'cifar10' | 'custom' | 'image_folder'
   epochs: number
   batchSize: number
   learningRate: number
@@ -41,6 +41,7 @@ export interface EpochMetrics {
   trainLoss: number
   valLoss: number
   valAccuracy: number
+  top5Accuracy?: number
   currentLR?: number
 }
 
@@ -87,4 +88,17 @@ export interface CustomDatasetPayload {
   datasetName: string
   trainSamples: number
   valSamples: number
+}
+
+// ── Computer Vision dataset ───────────────────────────────────────────────────
+
+export interface CVDataset {
+  sessionId: string
+  name: string
+  classNames: string[]
+  classCounts: Record<string, number>
+  totalImages: number
+  inputShape: [number, number, number]  // [C, H, W]
+  thumbnails: Record<string, string[]>  // class → base64 jpeg thumbnails
+  warnings: string[]
 }

@@ -45,6 +45,14 @@ interface TrainingState {
   exportONNX: () => void
   exportFull: () => void
 
+  // EDF export
+  setCustomDatasetFromEDF: (payload: CustomDatasetPayload) => void
+
+  // CV
+  cvDatasetRef: { sessionId: string; augmentSteps: unknown[] } | null
+  setCVDataset: (ref: { sessionId: string; augmentSteps: unknown[] }) => void
+  confusionMatrix: number[][] | null
+
   // XGBoost
   xgbStatus: 'idle' | 'running' | 'complete' | 'error'
   xgbResult: XGBResult | null
@@ -92,10 +100,25 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
   etaSecs: null,
   errorMessage: null,
   customDatasetInfo: null,
+  cvDatasetRef: null,
+  confusionMatrix: null,
 
   preflightIssues: [],
 
   _socket: null,
+
+  setCVDataset(ref) {
+    set({ cvDatasetRef: ref })
+  },
+
+  setCustomDatasetFromEDF(payload) {
+    set({ customDatasetInfo: payload })
+    // Auto-select custom dataset mode so training uses this data
+    const { config } = get()
+    if (config.dataset !== 'custom') {
+      set({ config: { ...config, dataset: 'custom' } })
+    }
+  },
 
   xgbStatus: 'idle',
   xgbResult: null,
@@ -130,9 +153,19 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
       customDataset = result.data
     }
 
+    // For image_folder mode, grab the cvDatasetRef from store
+    const cvDataset = config.dataset === 'image_folder' ? get().cvDatasetRef : null
+    if (config.dataset === 'image_folder' && !cvDataset) {
+      set({ status: 'error', errorMessage: 'No image dataset loaded. Import a zip of class folders in the Dataset tab first.' })
+      return
+    }
+
     // Pre-flight graph validation
+    const dsForValidation = useDatasetStore.getState().cvDataset
     const opts = config.dataset === 'custom' && customDataset
       ? { customFeatureCount: customDataset.featureCount, customClassCount: customDataset.classCount }
+      : config.dataset === 'image_folder' && dsForValidation
+      ? { cvInputShape: dsForValidation.inputShape, cvClassCount: dsForValidation.classNames.length }
       : {}
     const { issues, isValid } = validateGraph(nodes, edges, opts)
     set({ preflightIssues: issues })
@@ -159,7 +192,7 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
       const res = await fetch(`${API_BASE}/api/train/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ graph: { nodes, edges }, config, customDataset }),
+        body: JSON.stringify({ graph: { nodes, edges }, config, customDataset, cvDataset }),
       })
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -304,19 +337,22 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
         trainLoss: msg.trainLoss as number,
         valLoss: msg.valLoss as number,
         valAccuracy: msg.valAccuracy as number,
+        top5Accuracy: msg.top5Accuracy as number | undefined,
         currentLR: msg.currentLR as number | undefined,
       }
+      const accStr = `${((msg.valAccuracy as number) * 100).toFixed(1)}%`
+      const top5Str = entry.top5Accuracy != null ? ` · top-5 ${(entry.top5Accuracy * 100).toFixed(1)}%` : ''
       set((s) => ({
         epochMetrics: [...s.epochMetrics, entry],
         etaSecs: msg.etaSecs as number,
-        statusMessage: `Epoch ${msg.epoch} / ${msg.totalEpochs} — val acc ${((msg.valAccuracy as number) * 100).toFixed(1)}%`,
+        statusMessage: `Epoch ${msg.epoch} / ${msg.totalEpochs} — val acc ${accStr}${top5Str}`,
       }))
     } else if (type === 'warning') {
-      // Non-fatal warning — append to statusMessage so the user sees it
       set({ statusMessage: `⚠ ${msg.message as string}` })
     } else if (type === 'complete') {
       get()._socket?.close()
-      set({ status: 'complete', statusMessage: 'Training complete', _socket: null })
+      const cm = (msg as Record<string, unknown>).confusionMatrix
+      set({ status: 'complete', statusMessage: 'Training complete', _socket: null, confusionMatrix: cm as number[][] | null ?? null })
     } else if (type === 'stopped') {
       get()._socket?.close()
       set({ status: 'stopped', statusMessage: 'Training stopped', _socket: null })
