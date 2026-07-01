@@ -13,6 +13,7 @@ import { useGraphStore } from './store/useGraphStore'
 import { useProjectStore } from './store/useProjectStore'
 import { useTrainingStore } from './store/useTrainingStore'
 import { useIsMobile } from './hooks/useBreakpoint'
+import { LoadingLabel } from './components/panelChrome'
 
 const AUTOSAVE_DELAY = 1500
 
@@ -25,12 +26,22 @@ export default function App() {
   const isMobile = useIsMobile()
 
   const [view, setView] = useState<AppView>('model')
+  const [pendingView, setPendingView] = useState<AppView | null>(null)
   const [codeOpen, setCodeOpen] = useState(false)
   const [trainOpen, setTrainOpen] = useState(false)
   const [aiOpen, setAiOpen] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [inspectorOpen, setInspectorOpen] = useState(false)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+
+  function handleViewChange(next: AppView) {
+    if (next === view) return
+    setPendingView(next)
+    requestAnimationFrame(() => {
+      setView(next)
+      setPendingView(null)
+    })
+  }
 
   // Auto-open training panel when training starts
   useEffect(() => {
@@ -104,7 +115,7 @@ export default function App() {
     }}>
       <Topbar
         view={view}
-        onViewChange={setView}
+        onViewChange={handleViewChange}
         codeOpen={codeOpen}
         onToggleCode={() => setCodeOpen((o) => !o)}
         trainOpen={trainOpen}
@@ -118,28 +129,57 @@ export default function App() {
         onToggleInspector={() => setInspectorOpen((o) => !o)}
       />
 
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden', minHeight: 0, position: 'relative' }}>
-        {view === 'model' ? (
-          <>
-            {!isMobile && <Sidebar />}
-            {isMobile && (
-              <Sidebar mobile open={paletteOpen} onClose={() => setPaletteOpen(false)} />
-            )}
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
-              <main style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-                <FlowEditor />
-                {aiOpen && <AIPanel onClose={() => setAiOpen(false)} mobile={isMobile} />}
-              </main>
-              {codeOpen && <CodePanel onClose={() => setCodeOpen(false)} mobile={isMobile} />}
-              {trainOpen && <TrainingPanel onClose={() => setTrainOpen(false)} mobile={isMobile} />}
-            </div>
-            {!isMobile && <PropertyPanel />}
-            {isMobile && (
-              <PropertyPanel mobile open={inspectorOpen} onClose={() => setInspectorOpen(false)} />
-            )}
-          </>
-        ) : (
-          <DatasetPage mobile={isMobile} />
+      <div style={{ flex: 1, overflow: 'hidden', minHeight: 0, position: 'relative' }}>
+        {/* Both views stay mounted for fast switching; display:none hides React Flow nodes (visibility:hidden does not). */}
+        <div style={{
+          position: 'absolute',
+          inset: 0,
+          display: view === 'model' ? 'flex' : 'none',
+          overflow: 'hidden',
+          zIndex: view === 'model' ? 2 : 0,
+        }}>
+          {!isMobile && <Sidebar />}
+          {isMobile && (
+            <Sidebar mobile open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+          )}
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
+            <main style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+              {view === 'model' && <FlowEditor />}
+              {aiOpen && <AIPanel onClose={() => setAiOpen(false)} mobile={isMobile} />}
+            </main>
+            {codeOpen && <CodePanel onClose={() => setCodeOpen(false)} mobile={isMobile} />}
+            {trainOpen && <TrainingPanel onClose={() => setTrainOpen(false)} mobile={isMobile} />}
+          </div>
+          {!isMobile && <PropertyPanel />}
+          {isMobile && (
+            <PropertyPanel mobile open={inspectorOpen} onClose={() => setInspectorOpen(false)} />
+          )}
+        </div>
+
+        <div style={{
+          position: 'absolute',
+          inset: 0,
+          display: view === 'dataset' ? 'flex' : 'none',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          zIndex: view === 'dataset' ? 2 : 0,
+        }}>
+          <DatasetPage mobile={isMobile} active={view === 'dataset'} />
+        </div>
+
+        {pendingView && (
+          <div style={{
+            position: 'absolute',
+            inset: 0,
+            background: 'rgba(9,9,11,0.55)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 60,
+            pointerEvents: 'none',
+          }}>
+            <LoadingLabel label="Switching view…" />
+          </div>
         )}
       </div>
     </div>

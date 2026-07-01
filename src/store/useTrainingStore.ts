@@ -14,6 +14,7 @@ import { useDatasetStore } from './useDatasetStore'
 import { executePipeline } from '../editor/dataset/pipelineExecutor'
 import { validateGraph } from '../editor/validation/validateGraph'
 import { validateTabularTraining } from '../editor/validation/validateTabularTraining'
+import { deferWork } from '../utils/deferWork'
 
 const API_BASE = 'http://localhost:8000'
 
@@ -56,6 +57,7 @@ interface TrainingState {
 
   // XGBoost
   xgbStatus: 'idle' | 'running' | 'complete' | 'error'
+  xgbStatusMessage: string
   xgbResult: XGBResult | null
   xgbError: string | null
   xgbPreflightIssues: ValidationIssue[]
@@ -129,6 +131,7 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
   },
 
   xgbStatus: 'idle',
+  xgbStatusMessage: '',
   xgbResult: null,
   xgbError: null,
   xgbPreflightIssues: [],
@@ -139,6 +142,22 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
 
   async startTraining() {
     const { config, _handleMessage } = get()
+
+    set({
+      status: 'connecting',
+      statusMessage: 'Preparing dataset…',
+      epochMetrics: [],
+      currentEpoch: 0,
+      totalBatches: 0,
+      currentBatch: 0,
+      currentLoss: null,
+      etaSecs: null,
+      errorMessage: null,
+      preflightIssues: [],
+    })
+
+    await deferWork()
+
     const { nodes, edges } = useGraphStore.getState().exportGraph()
 
     // Build custom dataset payload if CSV mode is selected
@@ -169,6 +188,9 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
       return
     }
 
+    set({ statusMessage: 'Validating model…' })
+    await deferWork()
+
     // Pre-flight graph validation
     const dsForValidation = useDatasetStore.getState().cvDataset
     const opts = config.dataset === 'custom' && customDataset
@@ -187,13 +209,6 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
     set({
       status: 'connecting',
       statusMessage: 'Connecting to backend…',
-      epochMetrics: [],
-      currentEpoch: 0,
-      totalBatches: 0,
-      currentBatch: 0,
-      currentLoss: null,
-      etaSecs: null,
-      errorMessage: null,
       customDatasetInfo: customDataset,
     })
 
@@ -242,6 +257,17 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
 
   async trainXGBoost() {
     const { config } = get()
+
+    set({
+      xgbStatus: 'running',
+      xgbStatusMessage: 'Preparing pipeline…',
+      xgbError: null,
+      xgbResult: null,
+      xgbPreflightIssues: [],
+    })
+
+    await deferWork()
+
     const dsState = useDatasetStore.getState()
 
     const { issues, isValid } = validateTabularTraining(
@@ -261,10 +287,14 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
       const errorCount = issues.filter((i) => i.severity === 'error').length
       set({
         xgbStatus: 'error',
+        xgbStatusMessage: '',
         xgbError: `Fix ${errorCount} error${errorCount > 1 ? 's' : ''} before training XGBoost.`,
       })
       return
     }
+
+    set({ xgbStatusMessage: 'Running pipeline on full dataset…' })
+    await deferWork()
 
     const result = executePipeline(
       dsState.dataset!,
@@ -274,11 +304,12 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
       { task: config.xgbTask },
     )
     if (!result.ok) {
-      set({ xgbStatus: 'error', xgbError: result.error })
+      set({ xgbStatus: 'error', xgbStatusMessage: '', xgbError: result.error })
       return
     }
 
-    set({ xgbStatus: 'running', xgbError: null, xgbResult: null })
+    set({ xgbStatusMessage: 'Training XGBoost…' })
+    await deferWork()
 
     try {
       const res = await fetch(`${API_BASE}/api/xgboost/train`, {
@@ -306,13 +337,17 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
       const json = await res.json() as { error?: string; hint?: string } & Partial<XGBResult>
       if (!res.ok) {
         const msg = [json.error, json.hint].filter(Boolean).join(' — ')
-        set({ xgbStatus: 'error', xgbError: msg || `HTTP ${res.status}` })
+        set({ xgbStatus: 'error', xgbStatusMessage: '', xgbError: msg || `HTTP ${res.status}` })
         return
       }
 
-      set({ xgbStatus: 'complete', xgbResult: json as XGBResult })
+      set({ xgbStatus: 'complete', xgbStatusMessage: '', xgbResult: json as XGBResult })
     } catch (err) {
-      set({ xgbStatus: 'error', xgbError: err instanceof Error ? err.message : 'Request failed' })
+      set({
+        xgbStatus: 'error',
+        xgbStatusMessage: '',
+        xgbError: err instanceof Error ? err.message : 'Request failed',
+      })
     }
   },
 

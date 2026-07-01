@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   LineChart,
   Line,
@@ -18,7 +18,8 @@ import { useDatasetStore } from '../store/useDatasetStore'
 import { useGraphStore } from '../store/useGraphStore'
 import type { TrainingConfig, EpochMetrics, SchedulerType } from '../types/training'
 import type { ValidationIssue } from '../types/validation'
-import { validateTabularTraining } from '../editor/validation/validateTabularTraining'
+import { useDeferredTabularValidation } from '../hooks/useDeferredTabularValidation'
+import { LoadingLabel, PanelBusyOverlay } from './panelChrome'
 
 const API_BASE = 'http://localhost:8000'
 
@@ -47,6 +48,7 @@ export default function TrainingPanel({ onClose, mobile }: TrainingPanelProps) {
   const exportONNX = useTrainingStore((s) => s.exportONNX)
   const exportFull = useTrainingStore((s) => s.exportFull)
   const xgbStatus = useTrainingStore((s) => s.xgbStatus)
+  const xgbStatusMessage = useTrainingStore((s) => s.xgbStatusMessage)
   const xgbResult = useTrainingStore((s) => s.xgbResult)
   const xgbError = useTrainingStore((s) => s.xgbError)
   const xgbPreflightIssues = useTrainingStore((s) => s.xgbPreflightIssues)
@@ -89,23 +91,18 @@ export default function TrainingPanel({ onClose, mobile }: TrainingPanelProps) {
   const lastMetrics = epochMetrics[epochMetrics.length - 1]
   const panelHeight = mobile ? 'min(85dvh, 100%)' : height
 
-  const xgbLiveIssues = useMemo(() => {
-    if (!isXGB || xgbStatus === 'running') return []
-    return validateTabularTraining(
-      csvDataset,
-      csvTarget,
-      pipelineNodes,
-      pipelineEdges,
-      {
-        xgbTask: config.xgbTask,
-        xgbNEstimators: config.xgbNEstimators,
-        xgbEarlyStoppingRounds: config.xgbEarlyStoppingRounds,
-      },
-    ).issues.filter((i) => i.severity !== 'info')
-  }, [
-    isXGB, xgbStatus, csvDataset, csvTarget, pipelineNodes, pipelineEdges,
-    config.xgbTask, config.xgbNEstimators, config.xgbEarlyStoppingRounds,
-  ])
+  const xgbLiveIssues = useDeferredTabularValidation(
+    isXGB && xgbStatus !== 'running',
+    csvDataset,
+    csvTarget,
+    pipelineNodes,
+    pipelineEdges,
+    {
+      xgbTask: config.xgbTask,
+      xgbNEstimators: config.xgbNEstimators,
+      xgbEarlyStoppingRounds: config.xgbEarlyStoppingRounds,
+    },
+  )
 
   return (
     <div style={{
@@ -116,9 +113,18 @@ export default function TrainingPanel({ onClose, mobile }: TrainingPanelProps) {
       display: 'flex',
       flexDirection: 'column',
       flexShrink: 0,
-      position: mobile ? 'relative' : 'relative',
+      position: 'relative',
       ...(mobile ? { zIndex: 30 } : {}),
     }}>
+      {(isXGB ? xgbStatus === 'running' : isRunning) && (
+        <PanelBusyOverlay
+          label={
+            isXGB
+              ? (xgbStatusMessage || 'Training XGBoost…')
+              : (statusMessage || 'Preparing…')
+          }
+        />
+      )}
       {/* Resize handle on top edge */}
       {!mobile && (
       <div
@@ -226,9 +232,14 @@ export default function TrainingPanel({ onClose, mobile }: TrainingPanelProps) {
                 <>
                   <XGBConfigForm config={config} onChange={setConfig} onTrain={trainXGBoost}
                     running={xgbStatus === 'running'} csvDatasetName={csvDataset?.name ?? null} csvTarget={csvTarget} />
-                  {xgbStatus !== 'running' && xgbLiveIssues.length > 0 && (
+                  {xgbStatus !== 'running' && xgbLiveIssues.loading && (
                     <div style={{ marginTop: 10 }}>
-                      <PreflightPanel issues={xgbLiveIssues} />
+                      <LoadingLabel label="Checking dataset & pipeline…" />
+                    </div>
+                  )}
+                  {xgbStatus !== 'running' && !xgbLiveIssues.loading && xgbLiveIssues.issues.length > 0 && (
+                    <div style={{ marginTop: 10 }}>
+                      <PreflightPanel issues={xgbLiveIssues.issues} />
                     </div>
                   )}
                 </>
@@ -237,7 +248,7 @@ export default function TrainingPanel({ onClose, mobile }: TrainingPanelProps) {
             <div style={{ flex: 1, overflow: 'hidden' }}>
               {xgbStatus === 'running' ? (
                 <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
-                  <span style={{ fontSize: 12, color: '#71717a' }}>Training XGBoost…</span>
+                  <LoadingLabel label={xgbStatusMessage || 'Training XGBoost…'} />
                 </div>
               ) : xgbResult ? (
                 <XGBResults result={xgbResult} />

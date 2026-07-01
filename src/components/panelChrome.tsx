@@ -169,3 +169,57 @@ function ChevronIcon({ direction }: { direction: 'left' | 'right' }) {
     </svg>
   )
 }
+
+export function LoadingSpinner({ size = 14, color = '#a78bfa' }: { size?: number; color?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke={color}
+      strokeWidth="2.5"
+      style={{ animation: 'oneiros-spin 0.8s linear infinite', flexShrink: 0 }}
+    >
+      <path d="M12 2a10 10 0 0 1 10 10" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+export function LoadingLabel({ label }: { label: string }) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 10, color: '#71717a' }}>
+      <LoadingSpinner size={12} />
+      {label}
+    </span>
+  )
+}
+
+export function PanelBusyOverlay({ label }: { label: string }) {
+  return (
+    <div style={{
+      position: 'absolute',
+      inset: 0,
+      background: 'rgba(9,9,11,0.72)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 25,
+      backdropFilter: 'blur(2px)',
+    }}>
+      <div style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 10,
+        padding: '16px 20px',
+        borderRadius: 10,
+        background: '#18181b',
+        border: '1px solid #27272a',
+      }}>
+        <LoadingSpinner size={22} />
+        <span style={{ fontSize: 12, color: '#d4d4d8', fontWeight: 500 }}>{label}</span>
+      </div>
+    </div>
+  )
+}

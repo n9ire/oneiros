@@ -19,6 +19,7 @@ export function validateTabularTraining(
   pipelineNodes: AppNode[],
   pipelineEdges: AppEdge[],
   config: Pick<TrainingConfig, 'xgbTask' | 'xgbNEstimators' | 'xgbEarlyStoppingRounds'>,
+  options?: { pipelineMaxRows?: number; skipPipeline?: boolean },
 ): ValidationResult {
   const issues: ValidationIssue[] = []
 
@@ -117,21 +118,26 @@ export function validateTabularTraining(
     })
   }
 
-  const pipelineResult = executePipeline(
-    dataset,
-    targetColumn,
-    pipelineNodes,
-    pipelineEdges,
-    { task: config.xgbTask },
-  )
-  if (!pipelineResult.ok) {
+  const pipelineResult = options?.skipPipeline
+    ? null
+    : executePipeline(
+        dataset,
+        targetColumn,
+        pipelineNodes,
+        pipelineEdges,
+        {
+          task: config.xgbTask,
+          ...(options?.pipelineMaxRows != null ? { maxRows: options.pipelineMaxRows } : {}),
+        },
+      )
+  if (pipelineResult && !pipelineResult.ok) {
     issues.push({
       severity: 'error',
       category: 'dataset',
       message: pipelineResult.error,
       hint: 'Fix the preprocessing pipeline in Dataset → Pipeline.',
     })
-  } else if (pipelineResult.data.featureCount === 0) {
+  } else if (pipelineResult?.data.featureCount === 0) {
     issues.push({
       severity: 'error',
       category: 'dataset',

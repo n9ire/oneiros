@@ -21,6 +21,11 @@ body {
   font-size: 13px;
 }
 
+@keyframes oneiros-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 /* ── XYFlow canvas overrides ─────────────────────────────── */
 
 .react-flow__renderer {

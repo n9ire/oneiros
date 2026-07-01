@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useDatasetStore } from '../store/useDatasetStore'
 import type { ColumnInfo, EDFDataset } from '../store/useDatasetStore'
 import type { CVDataset } from '../types/training'
@@ -10,7 +10,8 @@ import { datasetNodeDefs } from '../editor/dataset/preprocessingNodes'
 import { edfNodeDefs } from '../editor/dataset/edfNodes'
 import { augNodeDefs } from '../editor/dataset/augmentNodes'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
-import { computeTabularModelInfo, pipelineStructureKey } from '../editor/dataset/datasetModelInfo'
+import { useTabularModelInfo } from '../hooks/useTabularModelInfo'
+import { LoadingLabel } from '../components/panelChrome'
 import type { LoadedDataset } from '../store/useDatasetStore'
 
 const PREVIEW_ROWS = 200
@@ -95,7 +96,7 @@ function ImageIcon() {
 
 type ActiveTab = 'table' | 'pipeline' | 'visualize' | 'edf' | 'cv'
 
-export default function DatasetPage({ mobile }: { mobile?: boolean }) {
+export default function DatasetPage({ mobile, active = true }: { mobile?: boolean; active?: boolean }) {
   const {
     dataset, loadFromCSV, loadFromJSON, clearDataset, targetColumn, setTargetColumn,
     edfDataset, loadFromEDF, clearEDF, edfLoading, edfError,
@@ -322,15 +323,17 @@ export default function DatasetPage({ mobile }: { mobile?: boolean }) {
           onImportImages={() => cvInputRef.current?.click()}
         />
       ) : activeTab === 'edf' && hasEDF ? (
-        <EDFView edf={edfDataset!} />
+        <EDFView edf={edfDataset!} active={active} />
       ) : activeTab === 'cv' && hasCV ? (
-        <CVView cv={cvDataset!} />
+        <CVView cv={cvDataset!} active={active} />
       ) : activeTab === 'table' && hasTabular ? (
         <TableView dataset={dataset!} />
       ) : activeTab === 'visualize' && hasTabular ? (
         <VisualizeView dataset={dataset!} />
+      ) : activeTab === 'pipeline' && hasTabular ? (
+        <PipelineView mobile={mobile} active={active} />
       ) : hasTabular ? (
-        <PipelineView mobile={mobile} />
+        <TableView dataset={dataset!} />
       ) : null}
     </div>
   )
@@ -384,34 +387,12 @@ function TabularModelInfoBar({
   dataset,
   targetColumn,
   usePipeline,
-  pipelineNodes,
-  pipelineEdges,
 }: {
   dataset: LoadedDataset
   targetColumn: string | null
   usePipeline?: boolean
-  pipelineNodes?: import('../types/graph').AppNode[]
-  pipelineEdges?: import('../types/graph').AppEdge[]
 }) {
-  const pipelineKey = useMemo(
-    () => (pipelineNodes && pipelineEdges ? pipelineStructureKey(pipelineNodes, pipelineEdges) : ''),
-    [pipelineNodes, pipelineEdges],
-  )
-  const nodesRef = useRef(pipelineNodes)
-  const edgesRef = useRef(pipelineEdges)
-  nodesRef.current = pipelineNodes
-  edgesRef.current = pipelineEdges
-
-  const info = useMemo(
-    () =>
-      computeTabularModelInfo(dataset, targetColumn, {
-        usePipeline,
-        pipelineNodes: nodesRef.current,
-        pipelineEdges: edgesRef.current,
-        previewLimit: PREVIEW_ROWS,
-      }),
-    [dataset, targetColumn, usePipeline, pipelineKey],
-  )
+  const { info, loading } = useTabularModelInfo(dataset, targetColumn, !!usePipeline)
 
   return (
     <div style={{
@@ -423,10 +404,16 @@ function TabularModelInfoBar({
       gap: 8,
       flexWrap: 'wrap',
       flexShrink: 0,
+      opacity: loading ? 0.75 : 1,
+      transition: 'opacity 0.15s ease',
     }}>
       <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: '#52525b', marginRight: 2 }}>
         For model
       </span>
+
+      {loading && usePipeline && (
+        <LoadingLabel label="Updating pipeline preview…" />
+      )}
 
       <InfoChip label="Rows" value={info.totalRows.toLocaleString()} accent />
       {info.previewRows != null && (
@@ -592,7 +579,7 @@ function TableView({ dataset }: { dataset: NonNullable<ReturnType<typeof useData
 
 type EDFSubTab = 'info' | 'pipeline' | 'visualize'
 
-function EDFView({ edf }: { edf: EDFDataset }) {
+function EDFView({ edf, active = true }: { edf: EDFDataset; active?: boolean }) {
   const [subTab, setSubTab] = useState<EDFSubTab>('info')
   const [vizType, setVizType] = useState<'waveform' | 'psd'>('waveform')
   const [selChannels, setSelChannels] = useState<string[]>(edf.channels.slice(0, 8))
@@ -727,7 +714,7 @@ function EDFView({ edf }: { edf: EDFDataset }) {
           {/* Canvas */}
           <div style={{ flex: 1, position: 'relative', display: 'flex', flexDirection: 'column' }}>
             <div style={{ flex: 1 }}>
-              <EDFFlow />
+              {active && <EDFFlow />}
             </div>
             {/* Export bar */}
             <div style={{ height: 46, background: '#111113', borderTop: '1px solid #1e1e2e', display: 'flex', alignItems: 'center', padding: '0 14px', gap: 10, flexShrink: 0 }}>
@@ -865,7 +852,7 @@ type CVSubTab = 'info' | 'augmentation' | 'export'
 
 const CV_COLORS = ['#0ea5e9','#06b6d4','#10b981','#f59e0b','#a855f7','#ec4899','#f97316','#84cc16','#6366f1','#ef4444']
 
-function CVView({ cv }: { cv: CVDataset }) {
+function CVView({ cv, active = true }: { cv: CVDataset; active?: boolean }) {
   const [subTab, setSubTab] = useState<CVSubTab>('info')
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewImg, setPreviewImg] = useState<string | null>(null)
@@ -1042,7 +1029,7 @@ function CVView({ cv }: { cv: CVDataset }) {
           {/* Canvas + preview panel */}
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             <div style={{ flex: 1 }}>
-              <AugFlow />
+              {active && <AugFlow />}
             </div>
             {/* Preview bar */}
             <div style={{ borderTop: '1px solid #1e1e2e', background: '#111113', padding: '8px 14px', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
@@ -1159,7 +1146,7 @@ function SectionLabel({ children, style }: { children: React.ReactNode; style?: 
 
 // ── Pipeline view ─────────────────────────────────────────────────────────────
 
-function PipelineView({ mobile }: { mobile?: boolean }) {
+function PipelineView({ mobile, active = true }: { mobile?: boolean; active?: boolean }) {
   const [paletteOpen, setPaletteOpen] = useState(false)
 
   const palette = (
@@ -1221,9 +1208,9 @@ function PipelineView({ mobile }: { mobile?: boolean }) {
         </div>
       )}
 
-      {/* Pipeline canvas */}
+      {/* Pipeline canvas — unmount React Flow when leaving pipeline tab or app view */}
       <div style={{ flex: 1, position: 'relative' }}>
-        <DatasetFlow />
+        {active && <DatasetFlow />}
       </div>
     </div>
   )
