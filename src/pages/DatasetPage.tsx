@@ -95,7 +95,7 @@ function ImageIcon() {
 
 type ActiveTab = 'table' | 'pipeline' | 'visualize' | 'edf' | 'cv'
 
-export default function DatasetPage() {
+export default function DatasetPage({ mobile }: { mobile?: boolean }) {
   const {
     dataset, loadFromCSV, loadFromJSON, clearDataset, targetColumn, setTargetColumn,
     edfDataset, loadFromEDF, clearEDF, edfLoading, edfError,
@@ -150,19 +150,23 @@ export default function DatasetPage() {
 
       {/* Toolbar */}
       <div style={{
-        height: 48,
+        height: mobile ? 'auto' : 48,
+        minHeight: 48,
         background: '#111113',
         borderBottom: '1px solid #1e1e2e',
         display: 'flex',
         alignItems: 'center',
-        padding: '0 16px',
+        padding: mobile ? '8px 12px' : '0 16px',
         gap: 10,
         flexShrink: 0,
         minWidth: 0,
+        flexWrap: mobile ? 'wrap' : 'nowrap',
       }}>
+        {!mobile && (
         <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: '#52525b' }}>
           Dataset Studio
         </span>
+        )}
 
         {/* Active dataset label */}
         {hasTabular && activeTab !== 'edf' && activeTab !== 'cv' && (
@@ -326,7 +330,7 @@ export default function DatasetPage() {
       ) : activeTab === 'visualize' && hasTabular ? (
         <VisualizeView dataset={dataset!} />
       ) : hasTabular ? (
-        <PipelineView />
+        <PipelineView mobile={mobile} />
       ) : null}
     </div>
   )
@@ -1155,27 +1159,67 @@ function SectionLabel({ children, style }: { children: React.ReactNode; style?: 
 
 // ── Pipeline view ─────────────────────────────────────────────────────────────
 
-function PipelineView() {
-  return (
-    <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-      {/* Mini palette */}
-      <div style={{
-        width: 190, background: '#111113',
-        borderRight: '1px solid #1e1e2e',
-        padding: '10px 0',
-        flexShrink: 0,
-        overflowY: 'auto',
-      }}>
-        <div style={{ padding: '2px 12px 6px', fontSize: 10, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: '#52525b' }}>
-          Transforms
-        </div>
-        {datasetNodeDefs.map((def) => (
-          <PipelinePaletteItem key={def.type} def={def} />
-        ))}
-        <div style={{ padding: '10px 12px 4px', marginTop: 8, borderTop: '1px solid #1e1e2e', fontSize: 10, color: '#3f3f46', lineHeight: 1.5 }}>
-          Drag transforms onto the canvas
-        </div>
+function PipelineView({ mobile }: { mobile?: boolean }) {
+  const [paletteOpen, setPaletteOpen] = useState(false)
+
+  const palette = (
+    <>
+      <div style={{ padding: '2px 12px 6px', fontSize: 10, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: '#52525b' }}>
+        Transforms
       </div>
+      {datasetNodeDefs.map((def) => (
+        <PipelinePaletteItem key={def.type} def={def} />
+      ))}
+      <div style={{ padding: '10px 12px 4px', marginTop: 8, borderTop: '1px solid #1e1e2e', fontSize: 10, color: '#3f3f46', lineHeight: 1.5 }}>
+        Drag transforms onto the canvas
+      </div>
+    </>
+  )
+
+  return (
+    <div style={{ flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' }}>
+      {mobile ? (
+        <>
+          <button
+            type="button"
+            onClick={() => setPaletteOpen(true)}
+            style={{
+              position: 'absolute', top: 10, left: 10, zIndex: 5,
+              padding: '6px 10px', borderRadius: 6,
+              border: '1px solid #27272a', background: '#18181b',
+              color: '#d4d4d8', fontSize: 11, fontWeight: 600, cursor: 'pointer',
+            }}
+          >
+            Transforms
+          </button>
+          {paletteOpen && (
+            <>
+              <div role="presentation" onClick={() => setPaletteOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 40 }} />
+              <div style={{
+                position: 'fixed', top: 52, left: 0, bottom: 0, width: 'min(280px, 88vw)',
+                zIndex: 50, background: '#111113', borderRight: '1px solid #1e1e2e',
+                overflowY: 'auto', padding: '10px 0',
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0 12px 8px', alignItems: 'center' }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: '#e4e4e7' }}>Transforms</span>
+                  <button type="button" onClick={() => setPaletteOpen(false)} style={{ background: 'none', border: 'none', color: '#71717a', fontSize: 18, cursor: 'pointer' }}>×</button>
+                </div>
+                {palette}
+              </div>
+            </>
+          )}
+        </>
+      ) : (
+        <div style={{
+          width: 190, background: '#111113',
+          borderRight: '1px solid #1e1e2e',
+          padding: '10px 0',
+          flexShrink: 0,
+          overflowY: 'auto',
+        }}>
+          {palette}
+        </div>
+      )}
 
       {/* Pipeline canvas */}
       <div style={{ flex: 1, position: 'relative' }}>

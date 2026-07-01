@@ -5,9 +5,10 @@ import { compileGraph } from '../editor/compiler/compile'
 
 interface CodePanelProps {
   onClose: () => void
+  mobile?: boolean
 }
 
-export default function CodePanel({ onClose }: CodePanelProps) {
+export default function CodePanel({ onClose, mobile }: CodePanelProps) {
   const nodes = useGraphStore((s) => s.nodes)
   const edges = useGraphStore((s) => s.edges)
   const projectName = useProjectStore((s) => s.name)
@@ -63,16 +64,19 @@ export default function CodePanel({ onClose }: CodePanelProps) {
   return (
     <div
       style={{
-        height,
+        height: mobile ? 'min(85dvh, 100%)' : height,
+        maxHeight: mobile ? '85dvh' : undefined,
         background: '#0d0e14',
         borderTop: '1px solid #1e1e2e',
         display: 'flex',
         flexDirection: 'column',
         flexShrink: 0,
         position: 'relative',
+        zIndex: mobile ? 30 : undefined,
       }}
     >
       {/* Resize handle */}
+      {!mobile && (
       <div
         onMouseDown={onResizeMouseDown}
         title="Drag to resize"
@@ -84,6 +88,7 @@ export default function CodePanel({ onClose }: CodePanelProps) {
         onMouseEnter={(e) => { e.currentTarget.style.background = '#7c3aed66' }}
         onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
       />
+      )}
       {/* Panel header */}
       <div
         style={{

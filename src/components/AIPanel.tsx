@@ -16,9 +16,10 @@ const QUICK_PROMPTS = [
 
 interface AIPanelProps {
   onClose: () => void
+  mobile?: boolean
 }
 
-export default function AIPanel({ onClose }: AIPanelProps) {
+export default function AIPanel({ onClose, mobile }: AIPanelProps) {
   const messages = useAIStore((s) => s.messages)
   const isLoading = useAIStore((s) => s.isLoading)
   const apiKey = useAIStore((s) => s.apiKey)
@@ -66,10 +67,10 @@ export default function AIPanel({ onClose }: AIPanelProps) {
     <div style={{
       position: 'absolute',
       top: 0, right: 0,
-      width: 360,
+      width: mobile ? '100%' : 360,
       height: '100%',
       background: '#0d0e14',
-      borderLeft: '1px solid #1e1e2e',
+      borderLeft: mobile ? 'none' : '1px solid #1e1e2e',
       display: 'flex',
       flexDirection: 'column',
       zIndex: 20,

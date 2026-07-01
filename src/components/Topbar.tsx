@@ -81,6 +81,25 @@ function RedoIcon() {
   )
 }
 
+function NodesIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="7" height="7" rx="1" />
+      <rect x="14" y="14" width="7" height="7" rx="1" />
+      <path d="M10 6h4M6 10v4M14 10v4M10 18h4" />
+    </svg>
+  )
+}
+
+function InspectorIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  )
+}
+
 // ── Topbar ────────────────────────────────────────────────────────────────────
 
 export type AppView = 'model' | 'dataset'
@@ -94,9 +113,17 @@ interface TopbarProps {
   onToggleTrain: () => void
   aiOpen: boolean
   onToggleAI: () => void
+  isMobile?: boolean
+  paletteOpen?: boolean
+  onTogglePalette?: () => void
+  inspectorOpen?: boolean
+  onToggleInspector?: () => void
 }
 
-export default function Topbar({ view, onViewChange, codeOpen, onToggleCode, trainOpen, onToggleTrain, aiOpen, onToggleAI }: TopbarProps) {
+export default function Topbar({
+  view, onViewChange, codeOpen, onToggleCode, trainOpen, onToggleTrain, aiOpen, onToggleAI,
+  isMobile, paletteOpen, onTogglePalette, inspectorOpen, onToggleInspector,
+}: TopbarProps) {
   const { name, isDirty, setName, saveToFile, loadFromFile, goHome } = useProjectStore()
   const canUndo = useGraphStore((s) => s.canUndo)
   const canRedo = useGraphStore((s) => s.canRedo)
@@ -160,17 +187,19 @@ export default function Topbar({ view, onViewChange, codeOpen, onToggleCode, tra
       </button>
 
       {/* Logo */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#7c3aed' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#7c3aed', flexShrink: 0 }}>
         <ZapIcon />
-        <span style={{ fontSize: 14, fontWeight: 700, letterSpacing: '-0.02em', color: '#e4e4e7' }}>
-          oneiros
-        </span>
+        {!isMobile && (
+          <span style={{ fontSize: 14, fontWeight: 700, letterSpacing: '-0.02em', color: '#e4e4e7' }}>
+            oneiros
+          </span>
+        )}
       </div>
 
-      <Divider />
+      {!isMobile && <Divider />}
 
       {/* Project name */}
-      {editing ? (
+      {!isMobile && (editing ? (
         <input
           ref={inputRef}
           value={draft}
@@ -219,16 +248,25 @@ export default function Topbar({ view, onViewChange, codeOpen, onToggleCode, tra
             />
           )}
         </button>
-      )}
+      ))}
 
-      <Divider />
+      {!isMobile && <Divider />}
 
       {/* View switcher */}
-      <div style={{ display: 'flex', gap: 2, background: '#18181b', border: '1px solid #27272a', borderRadius: 6, padding: 2 }}>
-        <ViewTab active={view === 'model'} onClick={() => onViewChange('model')} label="Model" />
-        <ViewTab active={view === 'dataset'} onClick={() => onViewChange('dataset')} label="Dataset" />
+      <div style={{ display: 'flex', gap: 2, background: '#18181b', border: '1px solid #27272a', borderRadius: 6, padding: 2, flexShrink: 0 }}>
+        <ViewTab active={view === 'model'} onClick={() => onViewChange('model')} label={isMobile ? 'Model' : 'Model'} compact={isMobile} />
+        <ViewTab active={view === 'dataset'} onClick={() => onViewChange('dataset')} label={isMobile ? 'Data' : 'Dataset'} compact={isMobile} />
       </div>
 
+      {isMobile && view === 'model' && (
+        <>
+          <IconButton onClick={onTogglePalette} title="Node palette" icon={<NodesIcon />} active={paletteOpen} />
+          <IconButton onClick={onToggleInspector} title="Inspector" icon={<InspectorIcon />} active={inspectorOpen} />
+        </>
+      )}
+
+      {!isMobile && (
+        <>
       <Divider />
 
       {/* Undo / Redo */}
@@ -246,12 +284,14 @@ export default function Topbar({ view, onViewChange, codeOpen, onToggleCode, tra
           icon={<RedoIcon />}
         />
       </div>
+        </>
+      )}
 
       {/* Spacer */}
       <div style={{ flex: 1 }} />
 
       {/* Validation summary */}
-      {(errorCount > 0 || warnCount > 0) && (
+      {!isMobile && (errorCount > 0 || warnCount > 0) && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           {errorCount > 0 && (
             <ValidationPill count={errorCount} type="error" />
@@ -265,17 +305,19 @@ export default function Topbar({ view, onViewChange, codeOpen, onToggleCode, tra
       <Divider />
 
       {/* File + view actions */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <TopbarButton onClick={loadFromFile} icon={<FolderOpenIcon />} label="Load" />
-        <TopbarButton onClick={saveToFile} icon={<SaveIcon />} label="Save" accent />
+      <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 4 : 6, flexShrink: 0, overflowX: 'auto' }}>
+        {!isMobile && <TopbarButton onClick={loadFromFile} icon={<FolderOpenIcon />} label="Load" />}
+        {!isMobile && <TopbarButton onClick={saveToFile} icon={<SaveIcon />} label="Save" accent />}
         {view === 'model' && (
           <>
-            <Divider />
+            {!isMobile && <Divider />}
             <TopbarButton
               onClick={onToggleCode}
               icon={<CodeIcon />}
               label="Code"
               active={codeOpen}
+              iconOnly={isMobile}
+              title="Code"
             />
             <TopbarButton
               onClick={onToggleTrain}
@@ -283,16 +325,20 @@ export default function Topbar({ view, onViewChange, codeOpen, onToggleCode, tra
               label="Train"
               active={trainOpen}
               accent={trainOpen}
+              iconOnly={isMobile}
+              title="Train"
             />
           </>
         )}
-        <Divider />
+        {!isMobile && <Divider />}
         <TopbarButton
           onClick={onToggleAI}
           icon={<SparkleIcon />}
           label="AI"
           active={aiOpen}
           accent={aiOpen}
+          iconOnly={isMobile}
+          title="AI"
         />
       </div>
     </header>
@@ -305,20 +351,21 @@ function Divider() {
   return <div style={{ width: 1, height: 20, background: '#27272a', flexShrink: 0 }} />
 }
 
-function ViewTab({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) {
+function ViewTab({ active, onClick, label, compact }: { active: boolean; onClick: () => void; label: string; compact?: boolean }) {
   return (
     <button
       onClick={onClick}
       style={{
-        padding: '4px 10px',
+        padding: compact ? '4px 8px' : '4px 10px',
         borderRadius: 4,
         border: 'none',
         background: active ? '#27272a' : 'transparent',
         color: active ? '#e4e4e7' : '#71717a',
-        fontSize: 12,
+        fontSize: compact ? 11 : 12,
         fontWeight: 500,
         cursor: 'pointer',
         transition: 'background 0.1s, color 0.1s',
+        whiteSpace: 'nowrap',
       }}
       onMouseEnter={(e) => { if (!active) e.currentTarget.style.color = '#a1a1aa' }}
       onMouseLeave={(e) => { if (!active) e.currentTarget.style.color = '#71717a' }}
@@ -356,11 +403,13 @@ function IconButton({
   disabled,
   title,
   icon,
+  active,
 }: {
   onClick?: () => void
   disabled?: boolean
   title?: string
   icon: React.ReactNode
+  active?: boolean
 }) {
   return (
     <button
@@ -368,17 +417,18 @@ function IconButton({
       disabled={disabled}
       title={title}
       style={{
-        width: 28,
-        height: 28,
+        width: 32,
+        height: 32,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
         borderRadius: 6,
-        border: '1px solid transparent',
-        background: 'transparent',
-        color: disabled ? '#3f3f46' : '#71717a',
+        border: active ? '1px solid #7c3aed' : '1px solid transparent',
+        background: active ? '#7c3aed1a' : 'transparent',
+        color: disabled ? '#3f3f46' : active ? '#c4b5fd' : '#71717a',
         cursor: disabled ? 'not-allowed' : 'pointer',
         transition: 'background 0.1s, color 0.1s',
+        flexShrink: 0,
       }}
       onMouseEnter={(e) => {
         if (!disabled) {
@@ -404,9 +454,10 @@ interface TopbarButtonProps {
   active?: boolean
   disabled?: boolean
   title?: string
+  iconOnly?: boolean
 }
 
-function TopbarButton({ onClick, icon, label, accent, active, disabled, title }: TopbarButtonProps) {
+function TopbarButton({ onClick, icon, label, accent, active, disabled, title, iconOnly }: TopbarButtonProps) {
   const bg = accent ? '#7c3aed1a' : active ? '#27272a' : 'transparent'
   const color = disabled ? '#3f3f46' : accent ? '#a78bfa' : active ? '#e4e4e7' : '#a1a1aa'
   const border = accent ? '1px solid #7c3aed' : active ? '1px solid #3f3f46' : '1px solid #27272a'
@@ -415,12 +466,12 @@ function TopbarButton({ onClick, icon, label, accent, active, disabled, title }:
     <button
       onClick={onClick}
       disabled={disabled}
-      title={title}
+      title={title ?? (iconOnly ? label || undefined : undefined)}
       style={{
         display: 'flex',
         alignItems: 'center',
-        gap: 6,
-        padding: '5px 10px',
+        gap: iconOnly ? 0 : 6,
+        padding: iconOnly ? '6px 8px' : '5px 10px',
         borderRadius: 6,
         border,
         background: bg,
@@ -429,6 +480,7 @@ function TopbarButton({ onClick, icon, label, accent, active, disabled, title }:
         fontWeight: 500,
         cursor: disabled ? 'not-allowed' : 'pointer',
         transition: 'background 0.12s, color 0.12s',
+        flexShrink: 0,
       }}
       onMouseEnter={(e) => {
         if (!disabled) {
@@ -442,7 +494,7 @@ function TopbarButton({ onClick, icon, label, accent, active, disabled, title }:
       }}
     >
       {icon}
-      {label}
+      {!iconOnly && label}
     </button>
   )
 }

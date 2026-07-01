@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   LineChart,
   Line,
@@ -18,14 +18,16 @@ import { useDatasetStore } from '../store/useDatasetStore'
 import { useGraphStore } from '../store/useGraphStore'
 import type { TrainingConfig, EpochMetrics, SchedulerType } from '../types/training'
 import type { ValidationIssue } from '../types/validation'
+import { validateTabularTraining } from '../editor/validation/validateTabularTraining'
 
 const API_BASE = 'http://localhost:8000'
 
 interface TrainingPanelProps {
   onClose: () => void
+  mobile?: boolean
 }
 
-export default function TrainingPanel({ onClose }: TrainingPanelProps) {
+export default function TrainingPanel({ onClose, mobile }: TrainingPanelProps) {
   const status = useTrainingStore((s) => s.status)
   const statusMessage = useTrainingStore((s) => s.statusMessage)
   const config = useTrainingStore((s) => s.config)
@@ -47,11 +49,14 @@ export default function TrainingPanel({ onClose }: TrainingPanelProps) {
   const xgbStatus = useTrainingStore((s) => s.xgbStatus)
   const xgbResult = useTrainingStore((s) => s.xgbResult)
   const xgbError = useTrainingStore((s) => s.xgbError)
+  const xgbPreflightIssues = useTrainingStore((s) => s.xgbPreflightIssues)
   const trainXGBoost = useTrainingStore((s) => s.trainXGBoost)
   const exportXGB = useTrainingStore((s) => s.exportXGB)
   const preflightIssues = useTrainingStore((s) => s.preflightIssues)
   const csvDataset = useDatasetStore((s) => s.dataset)
   const csvTarget = useDatasetStore((s) => s.targetColumn)
+  const pipelineNodes = useDatasetStore((s) => s.pipelineNodes)
+  const pipelineEdges = useDatasetStore((s) => s.pipelineEdges)
   const cvDataset = useDatasetStore((s) => s.cvDataset)
   const confusionMatrix = useTrainingStore((s) => s.confusionMatrix)
   // Live validation issues from the graph store (updated on every graph change)
@@ -82,18 +87,40 @@ export default function TrainingPanel({ onClose }: TrainingPanelProps) {
   const isRunning = status === 'running' || status === 'connecting'
   const hasMetrics = epochMetrics.length > 0
   const lastMetrics = epochMetrics[epochMetrics.length - 1]
+  const panelHeight = mobile ? 'min(85dvh, 100%)' : height
+
+  const xgbLiveIssues = useMemo(() => {
+    if (!isXGB || xgbStatus === 'running') return []
+    return validateTabularTraining(
+      csvDataset,
+      csvTarget,
+      pipelineNodes,
+      pipelineEdges,
+      {
+        xgbTask: config.xgbTask,
+        xgbNEstimators: config.xgbNEstimators,
+        xgbEarlyStoppingRounds: config.xgbEarlyStoppingRounds,
+      },
+    ).issues.filter((i) => i.severity !== 'info')
+  }, [
+    isXGB, xgbStatus, csvDataset, csvTarget, pipelineNodes, pipelineEdges,
+    config.xgbTask, config.xgbNEstimators, config.xgbEarlyStoppingRounds,
+  ])
 
   return (
     <div style={{
-      height,
+      height: panelHeight,
+      maxHeight: mobile ? '85dvh' : undefined,
       background: '#0d0e14',
       borderTop: '1px solid #1e1e2e',
       display: 'flex',
       flexDirection: 'column',
       flexShrink: 0,
-      position: 'relative',
+      position: mobile ? 'relative' : 'relative',
+      ...(mobile ? { zIndex: 30 } : {}),
     }}>
       {/* Resize handle on top edge */}
+      {!mobile && (
       <div
         onMouseDown={onResizeMouseDown}
         title="Drag to resize"
@@ -105,6 +132,7 @@ export default function TrainingPanel({ onClose }: TrainingPanelProps) {
         onMouseEnter={(e) => { e.currentTarget.style.background = '#7c3aed66' }}
         onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
       />
+      )}
       {/* Header */}
       <div style={{
         height: 36,
@@ -170,16 +198,40 @@ export default function TrainingPanel({ onClose }: TrainingPanelProps) {
       </div>
 
       {/* Body */}
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden', flexDirection: mobile ? 'column' : 'row' }}>
         {isXGB ? (
           /* ── XGBoost layout ─────────────────────────────────────────────── */
           <>
-            <div style={{ width: 280, borderRight: '1px solid #1e1e2e', padding: '12px 14px', overflowY: 'auto', flexShrink: 0 }}>
+            <div style={{
+              width: mobile ? '100%' : 280,
+              borderRight: mobile ? undefined : '1px solid #1e1e2e',
+              borderBottom: mobile ? '1px solid #1e1e2e' : undefined,
+              padding: '12px 14px',
+              overflowY: 'auto',
+              flexShrink: 0,
+              maxHeight: mobile ? '45%' : undefined,
+            }}>
               {xgbStatus === 'error' ? (
-                <ErrorBlock message={xgbError ?? 'Unknown error'} />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <ErrorBlock message={xgbError ?? 'Unknown error'} />
+                  {xgbPreflightIssues.length > 0 && <PreflightPanel issues={xgbPreflightIssues} />}
+                  <button
+                    onClick={() => useTrainingStore.setState({ xgbStatus: 'idle', xgbError: null, xgbPreflightIssues: [] })}
+                    style={{ fontSize: 11, color: '#71717a', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', padding: 0, marginTop: 2 }}
+                  >
+                    ← Back to config
+                  </button>
+                </div>
               ) : (
-                <XGBConfigForm config={config} onChange={setConfig} onTrain={trainXGBoost}
-                  running={xgbStatus === 'running'} csvDatasetName={csvDataset?.name ?? null} csvTarget={csvTarget} />
+                <>
+                  <XGBConfigForm config={config} onChange={setConfig} onTrain={trainXGBoost}
+                    running={xgbStatus === 'running'} csvDatasetName={csvDataset?.name ?? null} csvTarget={csvTarget} />
+                  {xgbStatus !== 'running' && xgbLiveIssues.length > 0 && (
+                    <div style={{ marginTop: 10 }}>
+                      <PreflightPanel issues={xgbLiveIssues} />
+                    </div>
+                  )}
+                </>
               )}
             </div>
             <div style={{ flex: 1, overflow: 'hidden' }}>
@@ -199,7 +251,7 @@ export default function TrainingPanel({ onClose }: TrainingPanelProps) {
         ) : (
           /* ── Neural network layout ──────────────────────────────────────── */
           <>
-            <div style={{ width: 280, borderRight: '1px solid #1e1e2e', padding: '12px 14px', overflowY: 'auto', flexShrink: 0 }}>
+            <div style={{ width: mobile ? '100%' : 280, borderRight: mobile ? undefined : '1px solid #1e1e2e', borderBottom: mobile ? '1px solid #1e1e2e' : undefined, padding: '12px 14px', overflowY: 'auto', flexShrink: 0, maxHeight: mobile ? '45%' : undefined }}>
               {status === 'error' ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                   <ErrorBlock message={errorMessage ?? 'Unknown error'} />
@@ -251,7 +303,7 @@ export default function TrainingPanel({ onClose }: TrainingPanelProps) {
               )}
               {hasMetrics ? (
                 <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0, overflow: 'auto' }}>
-                  <div style={{ flex: 1, display: 'flex', gap: 12, minHeight: 160 }}>
+                  <div style={{ flex: 1, display: 'flex', gap: 12, minHeight: 160, flexDirection: mobile ? 'column' : 'row' }}>
                     <ChartPanel title="Loss" data={epochMetrics}
                       lines={[
                         { key: 'trainLoss' as keyof EpochMetrics, color: '#8b5cf6', label: 'Train' },
@@ -634,6 +686,39 @@ function parseTrainingError(raw: string): { title: string; detail: string; hint:
   if (raw.includes('Graph is empty') || raw.includes('No Input') || raw.includes('No Output')) {
     return { title: 'Invalid Graph', detail: raw, hint: 'Build a complete graph: Input → layers → Output, all connected.' }
   }
+  if (raw.includes('xgboost') && raw.includes('not installed')) {
+    return { title: 'Missing Dependency', detail: raw, hint: 'Run: pip install xgboost scikit-learn in the backend directory.' }
+  }
+  if (raw.includes('No training data') || raw.includes('Load a CSV') || raw.includes('No dataset loaded')) {
+    return { title: 'No Dataset', detail: raw, hint: 'Import a CSV in Dataset tab, set a target column, and connect Source → Split in the pipeline.' }
+  }
+  if (raw.includes('Validation set is empty') || raw.includes('train ratio')) {
+    return { title: 'Split Error', detail: raw, hint: 'Lower the train ratio on the Split node or add more rows to your dataset.' }
+  }
+  if (raw.includes('No numeric feature') || raw.includes('zero columns') || raw.includes('zero features')) {
+    return { title: 'Pipeline Error', detail: raw, hint: 'One-hot encode categoricals or ensure numeric features remain after the pipeline.' }
+  }
+  if (raw.includes('at least 2 classes') || raw.includes('Classification requires')) {
+    return { title: 'Classification Error', detail: raw, hint: 'Pick a target with multiple classes or switch Task to Regression.' }
+  }
+  if (raw.includes('Regression targets') || raw.includes('non-numeric target')) {
+    return { title: 'Regression Error', detail: raw, hint: 'Use a numeric target column and set Task to Regression in the XGBoost panel.' }
+  }
+  if (raw.includes('early_stopping') || raw.includes('n_estimators')) {
+    return { title: 'Hyperparameter Error', detail: raw, hint: 'Set early_stopping_rounds lower than n_estimators.' }
+  }
+  if (raw.includes('Task is set to') || raw.includes('looks like')) {
+    return { title: 'Task Mismatch', detail: raw, hint: 'Match the Task toggle (Classification / Regression) to your target column type.' }
+  }
+  if (raw.includes('NaN values') || raw.includes('Fill NaN')) {
+    return { title: 'Invalid Features', detail: raw, hint: 'Add a Fill NaN transform in Dataset → Pipeline.' }
+  }
+  if (raw.includes('Model not found') || raw.includes('train first')) {
+    return { title: 'No Trained Model', detail: raw, hint: 'Train an XGBoost model before exporting.' }
+  }
+  if (raw.includes('XGBoost training failed') || raw.includes('XGBoost classification failed') || raw.includes('XGBoost regression failed')) {
+    return { title: 'XGBoost Error', detail: raw, hint: 'Check dataset, target column, task type, and pipeline configuration.' }
+  }
   return { title: 'Training Error', detail: raw, hint: '' }
 }
 
@@ -864,6 +949,10 @@ function XGBConfigForm({ config, onChange, onTrain, running, csvDatasetName, csv
 
 function XGBResults({ result }: { result: XGBResult }) {
   const top10 = result.featureImportance.slice(0, 10)
+  const showAccuracyChart =
+    result.task === 'classification' &&
+    result.evals.some((e) => e.valAccuracy != null)
+
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: '10px 14px', gap: 10 }}>
       {/* Summary chips */}
@@ -882,6 +971,56 @@ function XGBResults({ result }: { result: XGBResult }) {
         )}
         <MetricChip label="Best Round" value={`${result.bestIteration} / ${result.nEstimators}`} />
       </div>
+
+      {/* Loss + accuracy curves */}
+      {result.evals.length > 0 && (
+        <div style={{ display: 'flex', gap: 12, flexShrink: 0, minHeight: 160, flexWrap: 'wrap' }}>
+          <div style={{ flex: 1, minWidth: 180 }}>
+            <div style={{ fontSize: 10, fontWeight: 600, color: '#52525b', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>
+              Loss per Round
+            </div>
+            <ResponsiveContainer width="100%" height={140}>
+              <LineChart data={result.evals} margin={{ top: 2, right: 8, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1e2030" />
+                <XAxis dataKey="round" stroke="#3f3f46" tick={{ fontSize: 9, fill: '#52525b' }} />
+                <YAxis stroke="#3f3f46" tick={{ fontSize: 9, fill: '#52525b' }} />
+                <Tooltip contentStyle={{ background: '#18181b', border: '1px solid #27272a', fontSize: 11, borderRadius: 6 }} labelStyle={{ color: '#71717a' }} />
+                <Legend wrapperStyle={{ fontSize: 9, color: '#71717a' }} />
+                <Line type="monotone" dataKey="trainLoss" stroke="#f59e0b" strokeWidth={1.5} dot={false} name="Train" isAnimationActive={false} />
+                <Line type="monotone" dataKey="valLoss" stroke="#fbbf24" strokeWidth={1.5} dot={false} name="Val" isAnimationActive={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+
+          {showAccuracyChart && (
+            <div style={{ flex: 1, minWidth: 180 }}>
+              <div style={{ fontSize: 10, fontWeight: 600, color: '#52525b', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>
+                Accuracy per Round
+              </div>
+              <ResponsiveContainer width="100%" height={140}>
+                <LineChart data={result.evals} margin={{ top: 2, right: 8, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e2030" />
+                  <XAxis dataKey="round" stroke="#3f3f46" tick={{ fontSize: 9, fill: '#52525b' }} />
+                  <YAxis
+                    stroke="#3f3f46"
+                    tick={{ fontSize: 9, fill: '#52525b' }}
+                    domain={[0, 1]}
+                    tickFormatter={(v: number) => `${(v * 100).toFixed(0)}%`}
+                  />
+                  <Tooltip
+                    contentStyle={{ background: '#18181b', border: '1px solid #27272a', fontSize: 11, borderRadius: 6 }}
+                    labelStyle={{ color: '#71717a' }}
+                    formatter={(v: unknown) => [`${((v as number) * 100).toFixed(1)}%`]}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 9, color: '#71717a' }} />
+                  <Line type="monotone" dataKey="trainAccuracy" stroke="#10b981" strokeWidth={1.5} dot={false} name="Train" isAnimationActive={false} />
+                  <Line type="monotone" dataKey="valAccuracy" stroke="#34d399" strokeWidth={1.5} dot={false} name="Val" isAnimationActive={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </div>
+      )}
 
       <div style={{ flex: 1, display: 'flex', gap: 12, minHeight: 0 }}>
         {/* Feature importance */}
@@ -907,26 +1046,6 @@ function XGBResults({ result }: { result: XGBResult }) {
             </BarChart>
           </ResponsiveContainer>
         </div>
-
-        {/* Loss curve */}
-        {result.evals.length > 0 && (
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 10, fontWeight: 600, color: '#52525b', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>
-              Loss per Round
-            </div>
-            <ResponsiveContainer width="100%" height="90%">
-              <LineChart data={result.evals} margin={{ top: 2, right: 8, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e2030" />
-                <XAxis dataKey="round" stroke="#3f3f46" tick={{ fontSize: 9, fill: '#52525b' }} />
-                <YAxis stroke="#3f3f46" tick={{ fontSize: 9, fill: '#52525b' }} />
-                <Tooltip contentStyle={{ background: '#18181b', border: '1px solid #27272a', fontSize: 11, borderRadius: 6 }} labelStyle={{ color: '#71717a' }} />
-                <Legend wrapperStyle={{ fontSize: 9, color: '#71717a' }} />
-                <Line type="monotone" dataKey="trainLoss" stroke="#f59e0b" strokeWidth={1.5} dot={false} name="Train" isAnimationActive={false} />
-                <Line type="monotone" dataKey="valLoss" stroke="#fbbf24" strokeWidth={1.5} dot={false} name="Val" isAnimationActive={false} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        )}
       </div>
     </div>
   )

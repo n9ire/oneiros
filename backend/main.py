@@ -7,6 +7,13 @@ Start with:
 
 from __future__ import annotations
 
+import os
+
+# PyTorch + XGBoost both link OpenMP on macOS; loading both in one process
+# without this can segfault ("Python quit unexpectedly") when XGBoost trains.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+
 import asyncio
 import io
 import json
@@ -26,7 +33,7 @@ from datasets import get_loaders, get_dataset_info, list_datasets, make_custom_l
 from trainer import run_training_async
 from ai import chat as ai_chat
 from plotter import generate_plot, CHART_DEFS, PALETTES
-from xgboost_trainer import train_xgboost, REGRESSION_OBJECTIVES
+from xgboost_trainer import train_xgboost, REGRESSION_OBJECTIVES, _xgb_hint
 from edf_processor import (
     load_edf,
     apply_edf_pipeline,
@@ -177,17 +184,36 @@ async def xgboost_train(request: Request) -> dict:
     data   = body.get("data", {})
     config = body.get("config", {})
 
+    if not isinstance(data, dict) or not isinstance(config, dict):
+        return JSONResponse({"error": "Request body must include 'data' and 'config' objects."}, status_code=400)
+
     if not data.get("X_train"):
-        return JSONResponse({"error": "No training data provided. Load a CSV dataset and set a target column."}, status_code=422)
+        return JSONResponse(
+            {
+                "error": "No training data provided. Load a CSV dataset and set a target column.",
+                "hint": "Import data in Dataset tab, pick a target, and connect Source → Split in the pipeline.",
+            },
+            status_code=422,
+        )
 
     try:
         result = train_xgboost(data, config)
+    except ValueError as exc:
+        hint = _xgb_hint(exc)
+        return JSONResponse({"error": str(exc), "hint": hint}, status_code=422)
     except RuntimeError as exc:
-        return JSONResponse({"error": str(exc)}, status_code=503)
+        msg = str(exc)
+        hint = _xgb_hint(exc)
+        status = 503 if "not installed" in msg.lower() else 422
+        return JSONResponse({"error": msg, "hint": hint}, status_code=status)
     except Exception as exc:
         import traceback
         traceback.print_exc()
-        return JSONResponse({"error": f"XGBoost training failed: {exc}"}, status_code=500)
+        hint = _xgb_hint(exc)
+        return JSONResponse(
+            {"error": f"XGBoost training failed: {exc}", "hint": hint},
+            status_code=500,
+        )
 
     run_id = str(uuid.uuid4())
     xgb_models[run_id] = result.pop("modelB64")

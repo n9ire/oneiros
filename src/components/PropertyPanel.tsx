@@ -2,12 +2,18 @@ import { useRef, useState } from 'react'
 import { useGraphStore } from '../store/useGraphStore'
 import { getNodeDefinition } from '../editor/registry/nodeRegistry'
 import type { NodeField } from '../types/node'
-import { COLLAPSED_PANEL_WIDTH, CollapseBtn, CollapsedBar } from './panelChrome'
+import { COLLAPSED_PANEL_WIDTH, CollapseBtn, CollapsedBar, MobileDrawerBackdrop, MobileDrawerHeader, mobileDrawerStyle } from './panelChrome'
 
 const MIN_WIDTH = 200
 const MAX_WIDTH = 480
 
-export default function PropertyPanel() {
+interface PropertyPanelProps {
+  mobile?: boolean
+  open?: boolean
+  onClose?: () => void
+}
+
+export default function PropertyPanel({ mobile, open, onClose }: PropertyPanelProps = {}) {
   const selectedNodeId = useGraphStore((s) => s.selectedNodeId)
   const nodes = useGraphStore((s) => s.nodes)
   const updateNodeData = useGraphStore((s) => s.updateNodeData)
@@ -19,6 +25,46 @@ export default function PropertyPanel() {
 
   const selectedNode = nodes.find((n) => n.id === selectedNodeId)
   const def = selectedNode ? getNodeDefinition(selectedNode.type ?? '') : undefined
+
+  if (mobile && !open) return null
+
+  const inspectorContent = (
+    <div style={{ flex: 1, overflowY: 'auto' }}>
+      {!selectedNode ? (
+        <EmptyState />
+      ) : !def ? (
+        <div style={{ padding: 14, fontSize: 12, color: '#52525b' }}>
+          No definition found for node type "{selectedNode.type}".
+        </div>
+      ) : (
+        <div style={{ padding: '14px 14px' }}>
+          <div style={{ marginBottom: 16 }}>
+            <NodeIdBadge id={selectedNode.id} />
+          </div>
+          {def.fields.map((field) => (
+            <FieldControl
+              key={field.key}
+              field={field}
+              value={selectedNode.data[field.key]}
+              onChange={(val) => updateNodeData(selectedNode.id, { [field.key]: val })}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+
+  if (mobile) {
+    return (
+      <>
+        <MobileDrawerBackdrop onClose={onClose!} />
+        <aside style={{ ...mobileDrawerStyle('right'), display: 'flex', flexDirection: 'column' }}>
+          <MobileDrawerHeader title={def?.label ?? 'Inspector'} onClose={onClose!} />
+          {inspectorContent}
+        </aside>
+      </>
+    )
+  }
 
   function onResizeMouseDown(e: React.MouseEvent) {
     if (collapsed) return
@@ -94,29 +140,7 @@ export default function PropertyPanel() {
       </div>
 
       {/* Content */}
-      <div style={{ flex: 1, overflowY: 'auto' }}>
-        {!selectedNode ? (
-          <EmptyState />
-        ) : !def ? (
-          <div style={{ padding: 14, fontSize: 12, color: '#52525b' }}>
-            No definition found for node type "{selectedNode.type}".
-          </div>
-        ) : (
-          <div style={{ padding: '14px 14px' }}>
-            <div style={{ marginBottom: 16 }}>
-              <NodeIdBadge id={selectedNode.id} />
-            </div>
-            {def.fields.map((field) => (
-              <FieldControl
-                key={field.key}
-                field={field}
-                value={selectedNode.data[field.key]}
-                onChange={(val) => updateNodeData(selectedNode.id, { [field.key]: val })}
-              />
-            ))}
-          </div>
-        )}
-      </div>
+      {inspectorContent}
         </>
       )}
     </aside>

@@ -3,7 +3,13 @@ import type { DragEvent } from 'react'
 import { getAllNodes } from '../editor/registry/nodeRegistry'
 import '../editor/nodes/index'
 import type { NodeCategory } from '../types/node'
-import { COLLAPSED_PANEL_WIDTH, CollapseBtn, CollapsedBar } from './panelChrome'
+import { COLLAPSED_PANEL_WIDTH, CollapseBtn, CollapsedBar, MobileDrawerBackdrop, MobileDrawerHeader, mobileDrawerStyle } from './panelChrome'
+
+interface SidebarProps {
+  mobile?: boolean
+  open?: boolean
+  onClose?: () => void
+}
 
 const categoryLabels: Record<NodeCategory, string> = {
   input: 'Input / Output',
@@ -38,13 +44,15 @@ const COLLAPSED_WIDTH = COLLAPSED_PANEL_WIDTH
 const MIN_WIDTH = 160
 const MAX_WIDTH = 420
 
-export default function Sidebar() {
+export default function Sidebar({ mobile, open, onClose }: SidebarProps = {}) {
   const [query, setQuery] = useState('')
   const [width, setWidth] = useState(220)
   const [collapsed, setCollapsed] = useState(false)
   const drag = useRef({ active: false, startX: 0, startW: 0 })
   const allNodes = getAllNodes()
   const panelWidth = collapsed ? COLLAPSED_WIDTH : width
+
+  if (mobile && !open) return null
 
   const filtered = query.trim()
     ? allNodes.filter(
@@ -84,30 +92,8 @@ export default function Sidebar() {
     window.addEventListener('mouseup', onUp)
   }
 
-  return (
-    <aside
-      style={{
-        width: panelWidth,
-        minWidth: panelWidth,
-        background: '#111113',
-        borderRight: '1px solid #1e1e2e',
-        display: 'flex',
-        flexDirection: 'column',
-        flexShrink: 0,
-        overflow: 'hidden',
-        position: 'relative',
-        transition: 'width 0.18s ease, min-width 0.18s ease',
-      }}
-    >
-      {collapsed ? (
-        <CollapsedBar
-          side="left"
-          label="Nodes"
-          onToggle={() => setCollapsed(false)}
-        />
-      ) : (
-        <>
-      {/* Header */}
+  const paletteBody = (
+    <>
       <div style={{ padding: '12px 12px 8px', borderBottom: '1px solid #1e1e2e', display: 'flex', alignItems: 'center', gap: 6 }}>
         <div style={{
           display: 'flex', alignItems: 'center', gap: 7, flex: 1, minWidth: 0,
@@ -122,10 +108,9 @@ export default function Sidebar() {
             style={{ background: 'transparent', border: 'none', outline: 'none', color: '#d4d4d8', fontSize: 12, flex: 1, minWidth: 0 }}
           />
         </div>
-        <CollapseBtn side="left" onClick={() => setCollapsed(true)} title="Collapse palette" />
+        {!mobile && <CollapseBtn side="left" onClick={() => setCollapsed(true)} title="Collapse palette" />}
       </div>
 
-      {/* Node palette */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
         {categoryOrder.map((section) => {
           const items = grouped[section]
@@ -154,11 +139,48 @@ export default function Sidebar() {
         )}
       </div>
 
-      {/* Footer hint */}
       <div style={{ padding: '8px 14px', borderTop: '1px solid #1e1e2e', fontSize: 11, color: '#3f3f46', lineHeight: 1.5 }}>
-        Drag nodes onto the canvas
+        {mobile ? 'Drag nodes onto the canvas (or long-press to add)' : 'Drag nodes onto the canvas'}
       </div>
+    </>
+  )
 
+  if (mobile) {
+    return (
+      <>
+        <MobileDrawerBackdrop onClose={onClose!} />
+        <aside style={{ ...mobileDrawerStyle('left'), display: 'flex', flexDirection: 'column' }}>
+          <MobileDrawerHeader title="Nodes" onClose={onClose!} />
+          {paletteBody}
+        </aside>
+      </>
+    )
+  }
+
+  return (
+    <aside
+      style={{
+        width: panelWidth,
+        minWidth: panelWidth,
+        background: '#111113',
+        borderRight: '1px solid #1e1e2e',
+        display: 'flex',
+        flexDirection: 'column',
+        flexShrink: 0,
+        overflow: 'hidden',
+        position: 'relative',
+        transition: 'width 0.18s ease, min-width 0.18s ease',
+      }}
+    >
+      {collapsed ? (
+        <CollapsedBar
+          side="left"
+          label="Nodes"
+          onToggle={() => setCollapsed(false)}
+        />
+      ) : (
+        <>
+      {paletteBody}
       {/* Resize handle */}
       <div
         onMouseDown={onResizeMouseDown}
@@ -166,8 +188,7 @@ export default function Sidebar() {
         style={{
           position: 'absolute', top: 0, right: 0, width: 4, height: '100%',
           cursor: 'ew-resize', zIndex: 10,
-          background: 'transparent',
-          transition: 'background 0.15s',
+          background: 'transparent', transition: 'background 0.15s',
         }}
         onMouseEnter={(e) => { e.currentTarget.style.background = '#7c3aed66' }}
         onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}

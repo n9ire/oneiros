@@ -1,4 +1,76 @@
+import type { CSSProperties } from 'react'
+
 export const COLLAPSED_PANEL_WIDTH = 28
+export const MOBILE_DRAWER_WIDTH = 'min(320px, 88vw)'
+
+export function MobileDrawerBackdrop({ onClose }: { onClose: () => void }) {
+  return (
+    <div
+      role="presentation"
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.55)',
+        zIndex: 40,
+      }}
+    />
+  )
+}
+
+export function mobileDrawerStyle(side: 'left' | 'right'): CSSProperties {
+  return {
+    position: 'fixed',
+    top: 52,
+    bottom: 0,
+    ...(side === 'left' ? { left: 0 } : { right: 0 }),
+    width: MOBILE_DRAWER_WIDTH,
+    maxWidth: '100vw',
+    zIndex: 50,
+    background: '#111113',
+    borderRight: side === 'left' ? '1px solid #1e1e2e' : undefined,
+    borderLeft: side === 'right' ? '1px solid #1e1e2e' : undefined,
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
+    boxShadow: side === 'left' ? '4px 0 24px rgba(0,0,0,0.4)' : '-4px 0 24px rgba(0,0,0,0.4)',
+  }
+}
+
+export function MobileDrawerHeader({ title, onClose }: { title: string; onClose: () => void }) {
+  return (
+    <div style={{
+      padding: '10px 12px',
+      borderBottom: '1px solid #1e1e2e',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      flexShrink: 0,
+    }}>
+      <span style={{ fontSize: 12, fontWeight: 600, color: '#e4e4e7' }}>{title}</span>
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Close panel"
+        style={{
+          width: 32,
+          height: 32,
+          borderRadius: 6,
+          border: '1px solid #27272a',
+          background: '#18181b',
+          color: '#a1a1aa',
+          fontSize: 18,
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        ×
+      </button>
+    </div>
+  )
+}
 
 export function CollapseBtn({ side, onClick, title }: { side: 'left' | 'right'; onClick: () => void; title: string }) {
   return (

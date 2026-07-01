@@ -165,7 +165,7 @@ export function executePipeline(
   targetColumn: string,
   pipelineNodes: AppNode[],
   pipelineEdges: AppEdge[],
-  options?: { maxRows?: number },
+  options?: { maxRows?: number; task?: 'classification' | 'regression' },
 ): PipelineResult {
   if (!targetColumn) return { ok: false, error: 'No target column selected.' }
   if (!dataset.columns.find((c) => c.name === targetColumn)) {
@@ -397,7 +397,27 @@ export function executePipeline(
 
   // Extract y (target)
   const rawTargets = rows.map((r) => r[targetColumn])
-  const { encoded: y, classes: classNames } = encodeLabels(rawTargets)
+  const task = options?.task ?? 'classification'
+  let y: number[]
+  let classNames: string[]
+  if (task === 'regression') {
+    y = rawTargets.map((v) => {
+      const n = Number(v)
+      return Number.isFinite(n) ? n : NaN
+    })
+    classNames = []
+    const bad = y.filter((v) => !Number.isFinite(v)).length
+    if (bad > 0) {
+      return {
+        ok: false,
+        error: `${bad} row(s) have non-numeric target values. Regression requires numeric targets.`,
+      }
+    }
+  } else {
+    const encoded = encodeLabels(rawTargets)
+    y = encoded.encoded
+    classNames = encoded.classes
+  }
 
   // ── Apply column-level transforms ─────────────────────────────────────────
 

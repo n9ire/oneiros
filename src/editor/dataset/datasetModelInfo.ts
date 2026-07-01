@@ -21,7 +21,7 @@ export interface TabularModelInfo {
   missingTargets: number
 }
 
-function inferTaskType(
+export function inferTaskType(
   targetCol: LoadedDataset['columns'][number] | undefined,
   uniqueCount: number,
 ): 'classification' | 'regression' {

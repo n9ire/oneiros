@@ -13,6 +13,7 @@ import { useGraphStore } from './useGraphStore'
 import { useDatasetStore } from './useDatasetStore'
 import { executePipeline } from '../editor/dataset/pipelineExecutor'
 import { validateGraph } from '../editor/validation/validateGraph'
+import { validateTabularTraining } from '../editor/validation/validateTabularTraining'
 
 const API_BASE = 'http://localhost:8000'
 
@@ -57,6 +58,7 @@ interface TrainingState {
   xgbStatus: 'idle' | 'running' | 'complete' | 'error'
   xgbResult: XGBResult | null
   xgbError: string | null
+  xgbPreflightIssues: ValidationIssue[]
   trainXGBoost: () => Promise<void>
   exportXGB: () => void
 
@@ -81,7 +83,13 @@ export interface XGBResult {
   bestIteration: number
   nEstimators: number
   featureImportance: { name: string; importance: number }[]
-  evals: { round: number; trainLoss: number; valLoss: number }[]
+  evals: {
+    round: number
+    trainLoss: number
+    valLoss: number
+    trainAccuracy?: number
+    valAccuracy?: number
+  }[]
   runId: string
 }
 
@@ -123,6 +131,7 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
   xgbStatus: 'idle',
   xgbResult: null,
   xgbError: null,
+  xgbPreflightIssues: [],
 
   setConfig(patch) {
     set((s) => ({ config: { ...s.config, ...patch } }))
@@ -235,16 +244,34 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
     const { config } = get()
     const dsState = useDatasetStore.getState()
 
-    if (!dsState.dataset || !dsState.targetColumn) {
-      set({ xgbStatus: 'error', xgbError: 'Load a CSV dataset and set a target column first.' })
-      return
-    }
-
-    const result = executePipeline(
+    const { issues, isValid } = validateTabularTraining(
       dsState.dataset,
       dsState.targetColumn,
       dsState.pipelineNodes,
       dsState.pipelineEdges,
+      {
+        xgbTask: config.xgbTask,
+        xgbNEstimators: config.xgbNEstimators,
+        xgbEarlyStoppingRounds: config.xgbEarlyStoppingRounds,
+      },
+    )
+    set({ xgbPreflightIssues: issues })
+
+    if (!isValid) {
+      const errorCount = issues.filter((i) => i.severity === 'error').length
+      set({
+        xgbStatus: 'error',
+        xgbError: `Fix ${errorCount} error${errorCount > 1 ? 's' : ''} before training XGBoost.`,
+      })
+      return
+    }
+
+    const result = executePipeline(
+      dsState.dataset!,
+      dsState.targetColumn!,
+      dsState.pipelineNodes,
+      dsState.pipelineEdges,
+      { task: config.xgbTask },
     )
     if (!result.ok) {
       set({ xgbStatus: 'error', xgbError: result.error })
@@ -276,13 +303,14 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
         }),
       })
 
-      const json = await res.json()
+      const json = await res.json() as { error?: string; hint?: string } & Partial<XGBResult>
       if (!res.ok) {
-        set({ xgbStatus: 'error', xgbError: json.error ?? `HTTP ${res.status}` })
+        const msg = [json.error, json.hint].filter(Boolean).join(' — ')
+        set({ xgbStatus: 'error', xgbError: msg || `HTTP ${res.status}` })
         return
       }
 
-      set({ xgbStatus: 'complete', xgbResult: json as import('../store/useTrainingStore').XGBResult })
+      set({ xgbStatus: 'complete', xgbResult: json as XGBResult })
     } catch (err) {
       set({ xgbStatus: 'error', xgbError: err instanceof Error ? err.message : 'Request failed' })
     }

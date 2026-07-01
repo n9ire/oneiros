@@ -7,7 +7,8 @@ Returns metrics, feature importance, and serialised model bytes.
 from __future__ import annotations
 
 import base64
-import io
+import os
+import tempfile
 from typing import Any
 
 import numpy as np
@@ -41,6 +42,7 @@ def _common_kwargs(config: dict) -> dict[str, Any]:
         reg_lambda       = float(config.get("regLambda", 1.0)),
         random_state     = 42,
         verbosity        = 0,
+        n_jobs           = 1,
     )
     if early_stop > 0:
         kw["early_stopping_rounds"] = early_stop
@@ -56,7 +58,8 @@ def _feat_importance(model: Any, feature_names: list[str]) -> list[dict]:
     )[:30]
 
 
-def _evals_history(model: Any) -> list[dict]:
+def _evals_history(model: Any, task: str = "classification") -> list[dict]:
+    """Extract per-round loss and (for classification) accuracy from evals_result_."""
     evals: list[dict] = []
     if not hasattr(model, "evals_result_"):
         return evals
@@ -65,19 +68,116 @@ def _evals_history(model: Any) -> list[dict]:
     if len(keys) < 2:
         return evals
     train_key, val_key = keys[0], keys[1]
-    metric_key = list(res[train_key].keys())[0]
-    for i, (tl, vl) in enumerate(
-        zip(res[train_key][metric_key], res[val_key][metric_key])
-    ):
-        evals.append({"round": i + 1, "trainLoss": round(tl, 6), "valLoss": round(vl, 6)})
+    train_metrics = res[train_key]
+    val_metrics = res[val_key]
+
+    loss_keys = ["logloss", "mlogloss", "rmse", "mae", "rmsle", "tweedie-nloglik@1.5"]
+    loss_key = next((k for k in loss_keys if k in train_metrics), list(train_metrics.keys())[0])
+
+    acc_keys = ["error", "merror"]
+    acc_key = next((k for k in acc_keys if k in train_metrics), None)
+
+    n_rounds = len(train_metrics[loss_key])
+    for i in range(n_rounds):
+        entry: dict[str, Any] = {
+            "round": i + 1,
+            "trainLoss": round(float(train_metrics[loss_key][i]), 6),
+            "valLoss": round(float(val_metrics[loss_key][i]), 6),
+        }
+        if task == "classification" and acc_key:
+            entry["trainAccuracy"] = round(1.0 - float(train_metrics[acc_key][i]), 6)
+            entry["valAccuracy"] = round(1.0 - float(val_metrics[acc_key][i]), 6)
+        evals.append(entry)
     return evals
 
 
 def _save_model(model: Any) -> str:
-    buf = io.BytesIO()
-    model.save_model(buf)
-    buf.seek(0)
-    return base64.b64encode(buf.read()).decode("ascii")
+    # XGBoost 3.x requires a file path (BytesIO is not supported).
+    fd, path = tempfile.mkstemp(suffix=".json")
+    os.close(fd)
+    try:
+        model.save_model(path)
+        with open(path, "rb") as f:
+            raw = f.read()
+        return base64.b64encode(raw).decode("ascii")
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+def _validate_data(data: dict, task: str) -> None:
+    """Validate training payload before fit; raises ValueError with actionable messages."""
+    for key in ("X_train", "y_train", "X_val", "y_val"):
+        if key not in data or data[key] is None:
+            raise ValueError(f"Missing '{key}' in training payload.")
+
+    try:
+        X_train = np.array(data["X_train"], dtype=np.float32)
+        y_train = np.array(data["y_train"])
+        X_val = np.array(data["X_val"], dtype=np.float32)
+        y_val = np.array(data["y_val"])
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid training arrays: {exc}") from exc
+
+    if X_train.ndim != 2 or X_val.ndim != 2:
+        raise ValueError("X_train and X_val must be 2D arrays (samples × features).")
+    if X_train.shape[1] != X_val.shape[1]:
+        raise ValueError(
+            f"Feature count mismatch: train has {X_train.shape[1]} features, val has {X_val.shape[1]}."
+        )
+    if X_train.shape[1] == 0:
+        raise ValueError("Feature matrix has zero columns. Encode categoricals or add numeric features.")
+    if X_train.shape[0] != y_train.shape[0]:
+        raise ValueError(
+            f"X_train has {X_train.shape[0]} rows but y_train has {y_train.shape[0]}."
+        )
+    if X_val.shape[0] != y_val.shape[0]:
+        raise ValueError(
+            f"X_val has {X_val.shape[0]} rows but y_val has {y_val.shape[0]}."
+        )
+    if X_train.shape[0] < 2:
+        raise ValueError("Need at least 2 training samples after the pipeline split.")
+    if X_val.shape[0] < 1:
+        raise ValueError(
+            "Validation set is empty. Lower the train ratio in the Split node or add more rows."
+        )
+    if np.isnan(X_train).any() or np.isnan(X_val).any():
+        raise ValueError(
+            "Feature matrix contains NaN values. Add a Fill NaN step in the Dataset pipeline."
+        )
+
+    if task == "regression":
+        y_train = y_train.astype(np.float32)
+        y_val = y_val.astype(np.float32)
+        if not np.isfinite(y_train).all() or not np.isfinite(y_val).all():
+            raise ValueError("Regression targets must be finite numbers.")
+    else:
+        y_train = y_train.astype(np.int32)
+        y_val = y_val.astype(np.int32)
+        classes = np.unique(np.concatenate([y_train, y_val]))
+        if len(classes) < 2:
+            raise ValueError("Classification requires at least 2 classes in train and validation labels.")
+
+
+def _xgb_hint(exc: Exception) -> str:
+    msg = str(exc).lower()
+    if "nan" in msg:
+        return "Add a Fill NaN transform in Dataset → Pipeline."
+    if "validation set is empty" in msg or "train ratio" in msg:
+        return "Lower the train ratio on the Split node or add more rows."
+    if "zero columns" in msg or "no numeric feature" in msg:
+        return "One-hot encode categoricals or drop non-numeric columns in the pipeline."
+    if "at least 2 classes" in msg:
+        return "Pick a target with multiple classes or switch to Regression."
+    if "regression targets" in msg or "finite" in msg:
+        return "Use a numeric target column and set Task to Regression."
+    if "early stopping" in msg or "n_estimators" in msg:
+        return "Set early_stopping_rounds lower than n_estimators."
+    if "not installed" in msg:
+        return "Run: pip install xgboost scikit-learn"
+    return "Check your dataset, target column, and pipeline in the Dataset tab."
 
 
 # ── Public entry point ────────────────────────────────────────────────────────
@@ -93,6 +193,7 @@ def train_xgboost(data: dict, config: dict) -> dict[str, Any]:
     _check_xgb()
 
     task: str = config.get("task", "classification")
+    _validate_data(data, task)
 
     if task == "regression":
         return _train_regression(data, config)
@@ -119,8 +220,11 @@ def _train_classification(data: dict, config: dict) -> dict[str, Any]:
     if n_classes > 2:
         kw["num_class"] = n_classes
 
-    model = xgb.XGBClassifier(**kw)
-    model.fit(X_train, y_train, eval_set=[(X_train, y_train), (X_val, y_val)], verbose=False)
+    try:
+        model = xgb.XGBClassifier(**kw)
+        model.fit(X_train, y_train, eval_set=[(X_train, y_train), (X_val, y_val)], verbose=False)
+    except Exception as exc:
+        raise RuntimeError(f"XGBoost classification failed: {exc}") from exc
 
     best_iter = int(getattr(model, "best_iteration", kw["n_estimators"] - 1))
 
@@ -132,7 +236,7 @@ def _train_classification(data: dict, config: dict) -> dict[str, Any]:
         "nEstimators":       kw["n_estimators"],
         "nClasses":          n_classes,
         "featureImportance": _feat_importance(model, feature_names),
-        "evals":             _evals_history(model),
+        "evals":             _evals_history(model, "classification"),
         "modelB64":          _save_model(model),
     }
 
@@ -167,8 +271,11 @@ def _train_regression(data: dict, config: dict) -> dict[str, Any]:
     kw["objective"]   = obj
     kw["eval_metric"] = metric
 
-    model = xgb.XGBRegressor(**kw)
-    model.fit(X_train, y_train, eval_set=[(X_train, y_train), (X_val, y_val)], verbose=False)
+    try:
+        model = xgb.XGBRegressor(**kw)
+        model.fit(X_train, y_train, eval_set=[(X_train, y_train), (X_val, y_val)], verbose=False)
+    except Exception as exc:
+        raise RuntimeError(f"XGBoost regression failed: {exc}") from exc
 
     train_pred = model.predict(X_train)
     val_pred   = model.predict(X_val)
@@ -192,6 +299,6 @@ def _train_regression(data: dict, config: dict) -> dict[str, Any]:
         "bestIteration":     best_iter + 1,
         "nEstimators":       kw["n_estimators"],
         "featureImportance": _feat_importance(model, feature_names),
-        "evals":             _evals_history(model),
+        "evals":             _evals_history(model, "regression"),
         "modelB64":          _save_model(model),
     }
