@@ -1,0 +1,99 @@
+export const COLLAPSED_PANEL_WIDTH = 28
+
+export function CollapseBtn({ side, onClick, title }: { side: 'left' | 'right'; onClick: () => void; title: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      style={{
+        flexShrink: 0,
+        width: 22,
+        height: 22,
+        borderRadius: 5,
+        border: '1px solid #27272a',
+        background: '#18181b',
+        color: '#71717a',
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 0,
+        transition: 'color 0.12s, border-color 0.12s, background 0.12s',
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.color = '#e4e4e7'
+        e.currentTarget.style.borderColor = '#7c3aed'
+        e.currentTarget.style.background = '#1a1a2e'
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.color = '#71717a'
+        e.currentTarget.style.borderColor = '#27272a'
+        e.currentTarget.style.background = '#18181b'
+      }}
+    >
+      <ChevronIcon direction={side === 'left' ? 'left' : 'right'} />
+    </button>
+  )
+}
+
+export function CollapsedBar({ side, label, onToggle }: { side: 'left' | 'right'; label: string; onToggle: () => void }) {
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '10px 0', gap: 10 }}>
+      <button
+        type="button"
+        onClick={onToggle}
+        title={`Expand ${label.toLowerCase()}`}
+        style={{
+          width: 22,
+          height: 22,
+          borderRadius: 5,
+          border: '1px solid #27272a',
+          background: '#18181b',
+          color: '#71717a',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 0,
+          flexShrink: 0,
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.color = '#e4e4e7'
+          e.currentTarget.style.borderColor = '#7c3aed'
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.color = '#71717a'
+          e.currentTarget.style.borderColor = '#27272a'
+        }}
+      >
+        <ChevronIcon direction={side === 'left' ? 'right' : 'left'} />
+      </button>
+      <span
+        style={{
+          writingMode: 'vertical-rl',
+          textOrientation: 'mixed',
+          transform: side === 'left' ? 'rotate(180deg)' : undefined,
+          fontSize: 9,
+          fontWeight: 600,
+          letterSpacing: '0.1em',
+          textTransform: 'uppercase',
+          color: '#3f3f46',
+          userSelect: 'none',
+        }}
+      >
+        {label}
+      </span>
+    </div>
+  )
+}
+
+function ChevronIcon({ direction }: { direction: 'left' | 'right' }) {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      {direction === 'left'
+        ? <polyline points="15 18 9 12 15 6" />
+        : <polyline points="9 18 15 12 9 6" />}
+    </svg>
+  )
+}

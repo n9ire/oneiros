@@ -48,6 +48,27 @@ function topoSort(nodes: AppNode[], edges: AppEdge[]): AppNode[] {
   return result.filter(Boolean)
 }
 
+function reachableFromSource(nodes: AppNode[], edges: AppEdge[]): Set<string> {
+  const sourceIds = nodes.filter((n) => n.type === 'datasetSource').map((n) => n.id)
+  if (sourceIds.length === 0) return new Set<string>()
+
+  const adj = new Map<string, string[]>()
+  for (const e of edges) {
+    if (!adj.has(e.source)) adj.set(e.source, [])
+    adj.get(e.source)!.push(e.target)
+  }
+
+  const seen = new Set<string>()
+  const queue = [...sourceIds]
+  while (queue.length) {
+    const id = queue.shift()!
+    if (seen.has(id)) continue
+    seen.add(id)
+    for (const next of adj.get(id) ?? []) queue.push(next)
+  }
+  return seen
+}
+
 // ── Transformations ───────────────────────────────────────────────────────────
 
 function seededShuffle<T>(arr: T[], seed: number): T[] {
@@ -144,14 +165,22 @@ export function executePipeline(
   targetColumn: string,
   pipelineNodes: AppNode[],
   pipelineEdges: AppEdge[],
+  options?: { maxRows?: number },
 ): PipelineResult {
   if (!targetColumn) return { ok: false, error: 'No target column selected.' }
   if (!dataset.columns.find((c) => c.name === targetColumn)) {
     return { ok: false, error: `Target column "${targetColumn}" not found in dataset.` }
   }
 
+  const fullRowCount = dataset.rows.length
+  const previewRows =
+    options?.maxRows != null && fullRowCount > options.maxRows
+      ? dataset.rows.slice(0, options.maxRows)
+      : dataset.rows
+  const scaleToFull = previewRows.length > 0 ? fullRowCount / previewRows.length : 1
+
   // Default pipeline state
-  let rows = [...dataset.rows]
+  let rows = [...previewRows]
   let normalize = false
   let normalizeMethod: 'min-max' | 'zscore' = 'min-max'
   let normalizeColumns: string[] = []
@@ -184,8 +213,9 @@ export function executePipeline(
   let doBalance = false
   let doDropDuplicates = false
 
-  // Walk pipeline nodes in topological order
-  const sorted = topoSort(pipelineNodes, pipelineEdges)
+  // Walk only nodes reachable from the source (ignore disconnected palette drops)
+  const reachable = reachableFromSource(pipelineNodes, pipelineEdges)
+  const sorted = topoSort(pipelineNodes, pipelineEdges).filter((n) => reachable.has(n.id))
   for (const node of sorted) {
     const data = node.data as Record<string, unknown>
     switch (node.type) {
@@ -490,6 +520,11 @@ export function executePipeline(
     return { ok: false, error: 'Validation set is empty. Lower the train ratio or add more data.' }
   }
 
+  const trainSamples =
+    scaleToFull > 1 ? Math.round(X_train.length * scaleToFull) : X_train.length
+  const valSamples =
+    scaleToFull > 1 ? Math.round(X_val.length * scaleToFull) : X_val.length
+
   return {
     ok: true,
     data: {
@@ -501,8 +536,8 @@ export function executePipeline(
       featureCount: featureNames.length,
       classNames,
       classCount: classNames.length,
-      trainSamples: X_train.length,
-      valSamples: X_val.length,
+      trainSamples,
+      valSamples,
       datasetName: dataset.name,
     },
   }

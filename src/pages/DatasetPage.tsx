@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useDatasetStore } from '../store/useDatasetStore'
 import type { ColumnInfo, EDFDataset } from '../store/useDatasetStore'
 import type { CVDataset } from '../types/training'
@@ -10,6 +10,8 @@ import { datasetNodeDefs } from '../editor/dataset/preprocessingNodes'
 import { edfNodeDefs } from '../editor/dataset/edfNodes'
 import { augNodeDefs } from '../editor/dataset/augmentNodes'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
+import { computeTabularModelInfo, pipelineStructureKey } from '../editor/dataset/datasetModelInfo'
+import type { LoadedDataset } from '../store/useDatasetStore'
 
 const PREVIEW_ROWS = 200
 const API_BASE = 'http://localhost:8000'
@@ -163,13 +165,10 @@ export default function DatasetPage() {
         </span>
 
         {/* Active dataset label */}
-        {hasTabular && activeTab !== 'edf' && (
+        {hasTabular && activeTab !== 'edf' && activeTab !== 'cv' && (
           <>
             <span style={{ fontSize: 11, color: '#3f3f46', margin: '0 2px' }}>›</span>
             <span style={{ fontSize: 12, color: '#a1a1aa', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }}>{dataset.name}</span>
-            <span style={{ fontSize: 10, color: '#52525b', background: '#18181b', border: '1px solid #27272a', borderRadius: 4, padding: '1px 7px', flexShrink: 0 }}>
-              {dataset.rows.length.toLocaleString()} rows · {dataset.columns.length} cols
-            </span>
           </>
         )}
         {hasEDF && activeTab === 'edf' && (
@@ -194,7 +193,7 @@ export default function DatasetPage() {
         <div style={{ flex: 1 }} />
 
         {/* Target column selector (tabular only) */}
-        {hasTabular && activeTab !== 'edf' && (
+        {hasTabular && activeTab !== 'edf' && activeTab !== 'cv' && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0 }}>
             <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#52525b', whiteSpace: 'nowrap' }}>
               Target
@@ -218,7 +217,7 @@ export default function DatasetPage() {
         )}
 
         {/* Tab toggle */}
-        {(hasTabular || hasEDF) && (
+        {(hasTabular || hasEDF || hasCV) && (
           <div style={{ display: 'flex', gap: 2, background: '#18181b', border: '1px solid #27272a', borderRadius: 6, padding: 2, flexShrink: 0 }}>
             {hasTabular && (
               <>
@@ -237,7 +236,7 @@ export default function DatasetPage() {
         )}
 
         {/* Clear buttons */}
-        {hasTabular && activeTab !== 'edf' && (
+        {hasTabular && activeTab !== 'edf' && activeTab !== 'cv' && (
           <button
             onClick={() => { clearDataset(); if (!hasEDF) setActiveTab('table') }}
             style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 8px', borderRadius: 5, border: '1px solid #27272a', background: 'transparent', color: '#71717a', fontSize: 11, cursor: 'pointer', flexShrink: 0 }}
@@ -299,6 +298,15 @@ export default function DatasetPage() {
         <div style={{ background: 'rgba(239,68,68,0.07)', borderBottom: '1px solid #ef444420', padding: '6px 16px', fontSize: 12, color: '#fca5a5', flexShrink: 0 }}>
           Image dataset error: {cvError}
         </div>
+      )}
+
+      {/* Model-relevant dataset summary (tabular) */}
+      {hasTabular && activeTab !== 'edf' && activeTab !== 'cv' && dataset && (
+        <TabularModelInfoBar
+          dataset={dataset}
+          targetColumn={targetColumn}
+          usePipeline={activeTab === 'pipeline'}
+        />
       )}
 
       {/* Body */}
@@ -366,6 +374,157 @@ function EmptyState({ onImportCSV, onImportJSON, onImportEDF, onImportImages }: 
   )
 }
 
+// ── Tabular model summary bar ─────────────────────────────────────────────────
+
+function TabularModelInfoBar({
+  dataset,
+  targetColumn,
+  usePipeline,
+  pipelineNodes,
+  pipelineEdges,
+}: {
+  dataset: LoadedDataset
+  targetColumn: string | null
+  usePipeline?: boolean
+  pipelineNodes?: import('../types/graph').AppNode[]
+  pipelineEdges?: import('../types/graph').AppEdge[]
+}) {
+  const pipelineKey = useMemo(
+    () => (pipelineNodes && pipelineEdges ? pipelineStructureKey(pipelineNodes, pipelineEdges) : ''),
+    [pipelineNodes, pipelineEdges],
+  )
+  const nodesRef = useRef(pipelineNodes)
+  const edgesRef = useRef(pipelineEdges)
+  nodesRef.current = pipelineNodes
+  edgesRef.current = pipelineEdges
+
+  const info = useMemo(
+    () =>
+      computeTabularModelInfo(dataset, targetColumn, {
+        usePipeline,
+        pipelineNodes: nodesRef.current,
+        pipelineEdges: edgesRef.current,
+        previewLimit: PREVIEW_ROWS,
+      }),
+    [dataset, targetColumn, usePipeline, pipelineKey],
+  )
+
+  return (
+    <div style={{
+      padding: '7px 16px',
+      background: '#111113',
+      borderBottom: '1px solid #1e1e2e',
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      flexWrap: 'wrap',
+      flexShrink: 0,
+    }}>
+      <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: '#52525b', marginRight: 2 }}>
+        For model
+      </span>
+
+      <InfoChip label="Rows" value={info.totalRows.toLocaleString()} accent />
+      {info.previewRows != null && (
+        <InfoChip label="Preview" value={`${info.previewRows.toLocaleString()} shown`} />
+      )}
+      <InfoChip
+        label="Features"
+        value={
+          info.source === 'pipeline'
+            ? `${info.featureCount} (after pipeline)`
+            : `${info.featureCount} numeric${info.categoricalFeatures > 0 ? ` + ${info.categoricalFeatures} cat.` : ''}`
+        }
+      />
+      <InfoChip
+        label="Target"
+        value={info.targetColumn ?? 'not set'}
+        accent={!!info.targetColumn}
+        warn={!info.targetColumn}
+      />
+
+      {info.targetColumn && info.taskType === 'classification' && info.classCount != null && (
+        <InfoChip
+          label="Classes"
+          value={info.classPreview ? `${info.classCount} (${info.classPreview})` : String(info.classCount)}
+          accent
+        />
+      )}
+      {info.targetColumn && info.taskType === 'regression' && (
+        <InfoChip label="Task" value="Regression" accent />
+      )}
+
+      {info.inputShape && (
+        <InfoChip label="Input shape" value={`${info.inputShape} (C×H×W)`} hint="Set on Input node" />
+      )}
+      {info.outputClasses != null && (
+        <InfoChip label="Output classes" value={String(info.outputClasses)} hint="Set on Output node" />
+      )}
+
+      {info.trainSamples != null && info.valSamples != null && (
+        <InfoChip label="Split" value={`${info.trainSamples} train · ${info.valSamples} val`} />
+      )}
+
+      {info.missingTargets > 0 && (
+        <InfoChip label="Missing targets" value={String(info.missingTargets)} warn />
+      )}
+
+      {info.pipelineError && (
+        <span style={{ fontSize: 10, color: '#fca5a5' }}>Pipeline: {info.pipelineError}</span>
+      )}
+
+      {!info.targetColumn && (
+        <span style={{ fontSize: 10, color: '#71717a', marginLeft: 'auto' }}>
+          Pick a target column to see class count and Output node size
+        </span>
+      )}
+      {info.targetColumn && info.featureCount === 0 && (
+        <span style={{ fontSize: 10, color: '#fcd34d', marginLeft: info.targetColumn ? undefined : 'auto' }}>
+          No numeric features yet — encode categoricals in the Pipeline tab
+        </span>
+      )}
+    </div>
+  )
+}
+
+function InfoChip({
+  label,
+  value,
+  accent,
+  warn,
+  hint,
+}: {
+  label: string
+  value: string
+  accent?: boolean
+  warn?: boolean
+  hint?: string
+}) {
+  const border = warn ? '#f59e0b40' : accent ? '#7c3aed40' : '#27272a'
+  const bg = warn ? 'rgba(245,158,11,0.08)' : accent ? 'rgba(124,58,237,0.08)' : '#18181b'
+  const color = warn ? '#fcd34d' : accent ? '#c4b5fd' : '#a1a1aa'
+  return (
+    <span
+      title={hint}
+      style={{
+        fontSize: 10,
+        color,
+        background: bg,
+        border: `1px solid ${border}`,
+        borderRadius: 4,
+        padding: '2px 8px',
+        whiteSpace: 'nowrap',
+        maxWidth: 280,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+      }}
+    >
+      <span style={{ color: '#52525b' }}>{label}: </span>
+      {value}
+    </span>
+  )
+}
+
 // ── Table view ────────────────────────────────────────────────────────────────
 
 function TableView({ dataset }: { dataset: NonNullable<ReturnType<typeof useDatasetStore.getState>['dataset']> }) {
@@ -389,11 +548,6 @@ function TableView({ dataset }: { dataset: NonNullable<ReturnType<typeof useData
 
       {/* Data table */}
       <div style={{ flex: 1, overflow: 'auto', position: 'relative' }}>
-        {dataset.rows.length > PREVIEW_ROWS && (
-          <div style={{ padding: '6px 14px', background: '#1a1a2e', borderBottom: '1px solid #1e1e2e', fontSize: 11, color: '#7c3aed' }}>
-            Showing first {PREVIEW_ROWS} of {dataset.rows.length.toLocaleString()} rows
-          </div>
-        )}
         <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 12 }}>
           <thead>
             <tr style={{ background: '#111113', position: 'sticky', top: 0, zIndex: 1 }}>

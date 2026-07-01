@@ -2,6 +2,10 @@ import { useRef, useState } from 'react'
 import { useGraphStore } from '../store/useGraphStore'
 import { getNodeDefinition } from '../editor/registry/nodeRegistry'
 import type { NodeField } from '../types/node'
+import { COLLAPSED_PANEL_WIDTH, CollapseBtn, CollapsedBar } from './panelChrome'
+
+const MIN_WIDTH = 200
+const MAX_WIDTH = 480
 
 export default function PropertyPanel() {
   const selectedNodeId = useGraphStore((s) => s.selectedNodeId)
@@ -9,18 +13,21 @@ export default function PropertyPanel() {
   const updateNodeData = useGraphStore((s) => s.updateNodeData)
 
   const [width, setWidth] = useState(260)
+  const [collapsed, setCollapsed] = useState(false)
   const drag = useRef({ active: false, startX: 0, startW: 0 })
+  const panelWidth = collapsed ? COLLAPSED_PANEL_WIDTH : width
 
   const selectedNode = nodes.find((n) => n.id === selectedNodeId)
   const def = selectedNode ? getNodeDefinition(selectedNode.type ?? '') : undefined
 
   function onResizeMouseDown(e: React.MouseEvent) {
+    if (collapsed) return
     e.preventDefault()
     drag.current = { active: true, startX: e.clientX, startW: width }
     const onMove = (ev: MouseEvent) => {
       if (!drag.current.active) return
       // Dragging left edge: moving left increases width
-      const next = Math.max(200, Math.min(480, drag.current.startW + drag.current.startX - ev.clientX))
+      const next = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, drag.current.startW + drag.current.startX - ev.clientX))
       setWidth(next)
     }
     const onUp = () => {
@@ -35,8 +42,8 @@ export default function PropertyPanel() {
   return (
     <aside
       style={{
-        width,
-        minWidth: width,
+        width: panelWidth,
+        minWidth: panelWidth,
         background: '#111113',
         borderLeft: '1px solid #1e1e2e',
         display: 'flex',
@@ -44,8 +51,17 @@ export default function PropertyPanel() {
         flexShrink: 0,
         overflow: 'hidden',
         position: 'relative',
+        transition: 'width 0.18s ease, min-width 0.18s ease',
       }}
     >
+      {collapsed ? (
+        <CollapsedBar
+          side="right"
+          label="Inspector"
+          onToggle={() => setCollapsed(false)}
+        />
+      ) : (
+        <>
       {/* Resize handle on left edge */}
       <div
         onMouseDown={onResizeMouseDown}
@@ -68,6 +84,7 @@ export default function PropertyPanel() {
           gap: 8,
         }}
       >
+        <CollapseBtn side="right" onClick={() => setCollapsed(true)} title="Collapse inspector" />
         <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#52525b' }}>
           Inspector
         </span>
@@ -100,6 +117,8 @@ export default function PropertyPanel() {
           </div>
         )}
       </div>
+        </>
+      )}
     </aside>
   )
 }

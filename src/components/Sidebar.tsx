@@ -3,6 +3,7 @@ import type { DragEvent } from 'react'
 import { getAllNodes } from '../editor/registry/nodeRegistry'
 import '../editor/nodes/index'
 import type { NodeCategory } from '../types/node'
+import { COLLAPSED_PANEL_WIDTH, CollapseBtn, CollapsedBar } from './panelChrome'
 
 const categoryLabels: Record<NodeCategory, string> = {
   input: 'Input / Output',
@@ -33,11 +34,17 @@ function SearchIcon() {
   )
 }
 
+const COLLAPSED_WIDTH = COLLAPSED_PANEL_WIDTH
+const MIN_WIDTH = 160
+const MAX_WIDTH = 420
+
 export default function Sidebar() {
   const [query, setQuery] = useState('')
   const [width, setWidth] = useState(220)
+  const [collapsed, setCollapsed] = useState(false)
   const drag = useRef({ active: false, startX: 0, startW: 0 })
   const allNodes = getAllNodes()
+  const panelWidth = collapsed ? COLLAPSED_WIDTH : width
 
   const filtered = query.trim()
     ? allNodes.filter(
@@ -60,11 +67,12 @@ export default function Sidebar() {
   }
 
   function onResizeMouseDown(e: React.MouseEvent) {
+    if (collapsed) return
     e.preventDefault()
     drag.current = { active: true, startX: e.clientX, startW: width }
     const onMove = (ev: MouseEvent) => {
       if (!drag.current.active) return
-      const next = Math.max(160, Math.min(420, drag.current.startW + ev.clientX - drag.current.startX))
+      const next = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, drag.current.startW + ev.clientX - drag.current.startX))
       setWidth(next)
     }
     const onUp = () => {
@@ -79,8 +87,8 @@ export default function Sidebar() {
   return (
     <aside
       style={{
-        width,
-        minWidth: width,
+        width: panelWidth,
+        minWidth: panelWidth,
         background: '#111113',
         borderRight: '1px solid #1e1e2e',
         display: 'flex',
@@ -88,12 +96,21 @@ export default function Sidebar() {
         flexShrink: 0,
         overflow: 'hidden',
         position: 'relative',
+        transition: 'width 0.18s ease, min-width 0.18s ease',
       }}
     >
+      {collapsed ? (
+        <CollapsedBar
+          side="left"
+          label="Nodes"
+          onToggle={() => setCollapsed(false)}
+        />
+      ) : (
+        <>
       {/* Header */}
-      <div style={{ padding: '12px 12px 8px', borderBottom: '1px solid #1e1e2e' }}>
+      <div style={{ padding: '12px 12px 8px', borderBottom: '1px solid #1e1e2e', display: 'flex', alignItems: 'center', gap: 6 }}>
         <div style={{
-          display: 'flex', alignItems: 'center', gap: 7,
+          display: 'flex', alignItems: 'center', gap: 7, flex: 1, minWidth: 0,
           background: '#18181b', border: '1px solid #27272a',
           borderRadius: 7, padding: '6px 10px',
         }}>
@@ -105,6 +122,7 @@ export default function Sidebar() {
             style={{ background: 'transparent', border: 'none', outline: 'none', color: '#d4d4d8', fontSize: 12, flex: 1, minWidth: 0 }}
           />
         </div>
+        <CollapseBtn side="left" onClick={() => setCollapsed(true)} title="Collapse palette" />
       </div>
 
       {/* Node palette */}
@@ -154,6 +172,8 @@ export default function Sidebar() {
         onMouseEnter={(e) => { e.currentTarget.style.background = '#7c3aed66' }}
         onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
       />
+        </>
+      )}
     </aside>
   )
 }
