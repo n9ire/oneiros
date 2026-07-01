@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react'
 import { useProjectStore } from '../store/useProjectStore'
 import { useGraphStore } from '../store/useGraphStore'
+import { AppLogo } from './AppLogo'
 
 function HomeIcon() {
   return (
@@ -11,14 +12,6 @@ function HomeIcon() {
 }
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
-
-function ZapIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-    </svg>
-  )
-}
 
 function SaveIcon() {
   return (
@@ -187,8 +180,8 @@ export default function Topbar({
       </button>
 
       {/* Logo */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#7c3aed', flexShrink: 0 }}>
-        <ZapIcon />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+        <AppLogo size={isMobile ? 22 : 26} />
         {!isMobile && (
           <span style={{ fontSize: 14, fontWeight: 700, letterSpacing: '-0.02em', color: '#e4e4e7' }}>
             oneiros

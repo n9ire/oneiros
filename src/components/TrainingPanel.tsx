@@ -245,7 +245,7 @@ export default function TrainingPanel({ onClose, mobile }: TrainingPanelProps) {
                 </>
               )}
             </div>
-            <div style={{ flex: 1, overflow: 'hidden' }}>
+            <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
               {xgbStatus === 'running' ? (
                 <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
                   <LoadingLabel label={xgbStatusMessage || 'Training XGBoost…'} />
@@ -965,7 +965,7 @@ function XGBResults({ result }: { result: XGBResult }) {
     result.evals.some((e) => e.valAccuracy != null)
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: '10px 14px', gap: 10 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', padding: '10px 14px', gap: 10 }}>
       {/* Summary chips */}
       <div style={{ display: 'flex', gap: 16, flexShrink: 0, flexWrap: 'wrap' }}>
         {result.task === 'regression' ? (
@@ -985,12 +985,12 @@ function XGBResults({ result }: { result: XGBResult }) {
 
       {/* Loss + accuracy curves */}
       {result.evals.length > 0 && (
-        <div style={{ display: 'flex', gap: 12, flexShrink: 0, minHeight: 160, flexWrap: 'wrap' }}>
-          <div style={{ flex: 1, minWidth: 180 }}>
+        <div style={{ display: 'flex', gap: 12, flexShrink: 0, flexWrap: 'wrap' }}>
+          <div style={{ flex: 1, minWidth: 220 }}>
             <div style={{ fontSize: 10, fontWeight: 600, color: '#52525b', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>
               Loss per Round
             </div>
-            <ResponsiveContainer width="100%" height={140}>
+            <ResponsiveContainer width="100%" height={260}>
               <LineChart data={result.evals} margin={{ top: 2, right: 8, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#1e2030" />
                 <XAxis dataKey="round" stroke="#3f3f46" tick={{ fontSize: 9, fill: '#52525b' }} />
@@ -1004,11 +1004,11 @@ function XGBResults({ result }: { result: XGBResult }) {
           </div>
 
           {showAccuracyChart && (
-            <div style={{ flex: 1, minWidth: 180 }}>
+            <div style={{ flex: 1, minWidth: 220 }}>
               <div style={{ fontSize: 10, fontWeight: 600, color: '#52525b', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>
                 Accuracy per Round
               </div>
-              <ResponsiveContainer width="100%" height={140}>
+              <ResponsiveContainer width="100%" height={260}>
                 <LineChart data={result.evals} margin={{ top: 2, right: 8, left: -20, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#1e2030" />
                   <XAxis dataKey="round" stroke="#3f3f46" tick={{ fontSize: 9, fill: '#52525b' }} />
@@ -1033,13 +1033,13 @@ function XGBResults({ result }: { result: XGBResult }) {
         </div>
       )}
 
-      <div style={{ flex: 1, display: 'flex', gap: 12, minHeight: 0 }}>
+      <div style={{ flexShrink: 0, display: 'flex', gap: 12, minHeight: 220 }}>
         {/* Feature importance */}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 10, fontWeight: 600, color: '#52525b', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>
             Feature Importance (top 10)
           </div>
-          <ResponsiveContainer width="100%" height="90%">
+          <ResponsiveContainer width="100%" height={200}>
             <BarChart data={top10} layout="vertical" margin={{ top: 2, right: 8, left: 8, bottom: 2 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#1e2030" horizontal={false} />
               <XAxis type="number" stroke="#3f3f46" tick={{ fontSize: 9, fill: '#52525b' }} />

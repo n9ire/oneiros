@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useProjectStore } from '../store/useProjectStore'
 import type { ProjectEntry } from '../store/useProjectStore'
+import { AppLogo } from '../components/AppLogo'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -34,21 +35,14 @@ export default function ProjectsPage() {
     }}>
       {/* Header */}
       <header style={{
-        height: 60,
+        height: 56,
         borderBottom: '1px solid #18181b',
         display: 'flex',
         alignItems: 'center',
+        justifyContent: 'flex-end',
         padding: '0 32px',
-        gap: 12,
         flexShrink: 0,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 7, color: '#7c3aed' }}>
-          <ZapIcon />
-          <span style={{ fontSize: 16, fontWeight: 700, letterSpacing: '-0.03em', color: '#e4e4e7' }}>
-            oneiros
-          </span>
-        </div>
-        <div style={{ flex: 1 }} />
         <button
           onClick={() => createProject()}
           style={{
@@ -66,8 +60,11 @@ export default function ProjectsPage() {
         </button>
       </header>
 
+      {/* Brand hero */}
+      <BrandHero />
+
       {/* Body */}
-      <main style={{ flex: 1, padding: '40px 32px', maxWidth: 1200, width: '100%', margin: '0 auto' }}>
+      <main style={{ flex: 1, padding: '0 32px 48px', maxWidth: 1200, width: '100%', margin: '0 auto' }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, color: '#e4e4e7', margin: '0 0 8px', letterSpacing: '-0.02em' }}>
           Your Projects
         </h1>
@@ -94,6 +91,68 @@ export default function ProjectsPage() {
         </div>
       </main>
     </div>
+  )
+}
+
+// ── Brand hero ────────────────────────────────────────────────────────────────
+
+const FEATURE_PILLS = ['Neural nets', 'XGBoost', 'Datasets', 'Live training']
+
+function BrandHero() {
+  return (
+    <section style={{
+      position: 'relative',
+      overflow: 'hidden',
+      borderBottom: '1px solid #18181b',
+      padding: '44px 32px 36px',
+    }}>
+      <div className="projects-hero-glow" aria-hidden />
+      <div className="projects-hero-grid" aria-hidden />
+
+      <div style={{
+        position: 'relative',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        textAlign: 'center',
+        maxWidth: 560,
+        margin: '0 auto',
+      }}>
+        <AppLogo size={84} />
+        <h1
+          className="oneiros-wordmark"
+          style={{ fontSize: 'clamp(1.75rem, 4vw, 2.25rem)', margin: '18px 0 10px', lineHeight: 1.1 }}
+        >
+          oneiros
+        </h1>
+        <p style={{ fontSize: 14, color: '#a1a1aa', margin: 0, letterSpacing: '0.02em' }}>
+          Visual machine learning IDE
+        </p>
+        <p style={{ fontSize: 12, color: '#52525b', margin: '10px 0 0', lineHeight: 1.6, maxWidth: 400 }}>
+          Build models on a node canvas, preprocess datasets, and train — PyTorch, XGBoost, and more, all in the browser.
+        </p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center', marginTop: 18 }}>
+          {FEATURE_PILLS.map((label) => (
+            <span
+              key={label}
+              style={{
+                fontSize: 10,
+                fontWeight: 600,
+                letterSpacing: '0.06em',
+                textTransform: 'uppercase',
+                color: '#71717a',
+                background: 'rgba(24,24,27,0.8)',
+                border: '1px solid #27272a',
+                borderRadius: 999,
+                padding: '4px 10px',
+              }}
+            >
+              {label}
+            </span>
+          ))}
+        </div>
+      </div>
+    </section>
   )
 }
 
@@ -372,14 +431,6 @@ function IconActionBtn({ onClick, title, danger, children }: { onClick: () => vo
 }
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
-
-function ZapIcon() {
-  return (
-    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-    </svg>
-  )
-}
 
 function PlusIcon({ size = 14 }: { size?: number }) {
   return (
